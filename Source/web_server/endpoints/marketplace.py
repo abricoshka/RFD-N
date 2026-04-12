@@ -149,7 +149,7 @@ def _(self: web_server_handler, match: re.Match[str]) -> bool:
             "price": 0,
             "assetId": gamepass_id,
             "assetName": "",
-            "assetType": "Gamepass",
+            "assetType": 34,
             "assetTypeDisplayName": "Gamepass",
             "assetIsWearable": False,
             "sellerName": "",
@@ -232,7 +232,7 @@ def _(self: web_server_handler) -> bool:
         "ProductId": gamepass.id_num,
         "Name": gamepass.name,
         "Description": gamepass.name,
-        "AssetTypeId": "GamePass",
+        "AssetTypeId": 34,
         "Creator": {
             "Id": 1,
             "Name": "",
@@ -380,7 +380,7 @@ def _(self: web_server_handler) -> bool:
             "ProductId": gamepass_data.id_num,
             "Name": gamepass_data.name,
             "Description": "",
-            "AssetTypeId": "GamePass",
+            "AssetTypeId": 34,
             "IsForSale": True,
             "IsPublicDomain": False,
             'Creator': {

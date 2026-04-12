@@ -445,8 +445,10 @@ def perform_and_send_join(self: web_server_handler, additional_return_data: dict
             id_num,
         'CharacterAppearance':
             f'{self.hostname}/v1.1/avatar-fetch?userId={id_num}',
+        'MembershipType':
+            server_core.retrieve_membership_type(id_num, user_code),
     }
-
+    
     # NOTE: the `SessionId` is saved as an HTTPS header `Roblox-Session-Id` for later requests.
     # I'm placing the information which was passed into `join.ashx` here for simplicity.
     join_data |= {
@@ -471,7 +473,6 @@ def _(self: web_server_handler) -> bool:
         'VideoInfo': '',
         'CreatorId': 0,
         'CreatorTypeEnum': 'User',
-        'MembershipType': 'None',
         'CookieStoreFirstTimePlayKey': 'rbx_evt_ftp',
         'CookieStoreFiveMinutePlayKey': 'rbx_evt_fmp',
         'CookieStoreEnabled': False,
@@ -500,7 +501,6 @@ def _(self: web_server_handler) -> bool:
         'GameId': util.const.PLACE_IDEN_CONST,
         'CreatorId': 0,
         'CreatorTypeEnum': 'User',
-        'MembershipType': 'None',
         'CookieStoreFirstTimePlayKey': 'rbx_evt_ftp',
         'CookieStoreFiveMinutePlayKey': 'rbx_evt_fmp',
         'CookieStoreEnabled': True,

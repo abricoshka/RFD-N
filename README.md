@@ -11,7 +11,7 @@ https://github.com/user-attachments/assets/483c4263-db43-4ec2-9243-b0b885e625f6
 
 Rōblox Freedom Distribution is one such solution. It's a revival launcher built on existing research for self-hosting Rōblox servers.
 
-Using RFD, users can host their own server instances from compiled Rōblox binaries from 2018-07-25 or 2021-01-25.
+Using RFD, users can host their own server instances from compiled Rōblox binaries from 2018-07-31 (v347) or 2021-01-25 (v463).
 
 Players can join existing servers.
 
@@ -105,7 +105,8 @@ Game-specific options are specified in the `--config_path` argument, which defau
 
 As of RFD 0.65.1, the available options are as follows:
 
-```usage: _main.py server [--config_path [CONFIG_PATH ...] |
+```
+usage: _main.py server [--config_path [CONFIG_PATH ...] |
                        --place_path [PLACE_PATH ...]] [--ipv4-only |
                        --ipv6-only] [--rcc_port [RCC_PORT ...]]
                        [--web_port [WEB_PORT ...]] [--run_client]
@@ -676,7 +677,7 @@ Corresponds to Rōblox [`Enum.ChatStyle`](https://create.roblox.com/docs/referen
 
 #### `server_core.check_user_allowed`
 
-Resolves to [function](#functions) type `(int, str) -> bool`.
+Resolves to [function](#functions) type `(str) -> bool`.
 
 **This function is responsible for authorising users.**
 
@@ -977,6 +978,29 @@ price = 1
 [remote_data.badges.757]
 name = 'Awardable Badge'
 price = 1
+```
+
+#### `retrieve_membership_type`
+
+```python
+retrieve_membership_type_call_mode = "python"
+retrieve_membership_type = '''
+def retrieve_membership_type(user_id_num, user_code):
+    premium_users = {"user1", "user2"}
+    bc_users = {"user3"}
+    tbc_users = {"user4"}
+    obc_users = {"user5"}
+
+    if user_code in obc_users:
+        return "OutrageousBuildersClub"
+    if user_code in tbc_users:
+        return "TurboBuildersClub"
+    if user_code in bc_users:
+        return "BuildersClub"
+    if user_code in premium_users:
+        return "Premium"
+    return "None"
+'''
 ```
 
 ---
