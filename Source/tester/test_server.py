@@ -46,6 +46,8 @@ class TestServer(unittest.TestCase):
                 server_mode=web.SERVER_MODE_TYPE.RCC,
                 is_ipv6=False,
                 is_ssl=True,
+                rbolock_proxy_port=None,
+                rbolock_http_proxy_port=None,
             ),
             rcc.obj_type(
                 rcc_port=cls.random_port,

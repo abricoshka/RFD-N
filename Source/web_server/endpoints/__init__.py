@@ -14,6 +14,7 @@ from . import (
     join_data,
     marketplace,
     mobile,
+    oauth,
     persistence,
     player_info,
     save_place,

@@ -4,7 +4,6 @@ import enum
 import functools
 import http.server
 import json
-import os
 import re
 import select
 import socket
@@ -61,6 +60,43 @@ HOP_BY_HOP_HEADERS = {
     'transfer-encoding',
     'upgrade',
 }
+DEFAULT_PORTS = {
+    'http': 80,
+    'https': 443,
+}
+PRIVILEGED_DOMAINS = {
+    'localhost',
+    'www.rbolock.tk',
+    'assetdelivery.rbolock.tk',
+    'rbolock.tk',
+    'api.rbolock.tk',
+    'assetgame.rbolock.tk',
+    'clientsettingscdn.rbolock.tk',
+}
+RBOLOCK_DOMAIN = 'rbolock.tk'
+
+
+def parse_host_header(host_header: str) -> tuple[str, int | None] | None:
+    try:
+        authority = parse.urlsplit(f'//{host_header}')
+    except ValueError:
+        return None
+
+    domain = authority.hostname
+    if domain is None:
+        return None
+
+    try:
+        return (domain, authority.port)
+    except ValueError:
+        return None
+
+
+def format_hostname(domain: str, port: int | None) -> str:
+    host = f'[{domain}]' if ':' in domain else domain
+    if port is None:
+        return host
+    return f'{host}:{port}'
 
 
 def server_path(
@@ -108,6 +144,7 @@ class web_server(http.server.ThreadingHTTPServer):
         self.server_mode = server_mode
         self.logger = log_filter
         self.is_ipv6 = is_ipv6
+        self.proxy = None
         self.frontend_proxy = (
             frontend_proxy.rstrip('/')
             if frontend_proxy is not None
@@ -139,32 +176,55 @@ class web_server(http.server.ThreadingHTTPServer):
 
 class web_server_ssl(web_server):
     def get_context(self):
-        if not os.path.isfile(self.cert_path):
-            raise FileNotFoundError(
-                f"SSL certificate file was not found: {self.cert_path}"
-            )
-        if not os.path.isfile(self.key_path):
-            raise FileNotFoundError(
-                f"SSL private key file was not found: {self.key_path}"
-            )
+        import util.ssl_context
+
+        localhost_cert_paths = util.ssl_context.get_localhost_cert_paths()
+        if localhost_cert_paths is None:
+            localhost_cert_paths = util.ssl_context.get_server_cert_paths()
 
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(
-            certfile=self.cert_path,
-            keyfile=self.key_path,
+            certfile=localhost_cert_paths[0],
+            keyfile=localhost_cert_paths[1],
         )
         ctx.check_hostname = False
+        self.localhost_ssl_context = ctx
+
+        rbolock_context = None
+        rbolock_cert_paths = util.ssl_context.get_server_cert_paths()
+        if rbolock_cert_paths != localhost_cert_paths:
+            rbolock_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            rbolock_context.load_cert_chain(
+                certfile=rbolock_cert_paths[0],
+                keyfile=rbolock_cert_paths[1],
+            )
+            rbolock_context.check_hostname = False
+            self.rbolock_ssl_context = rbolock_context
+
+            def handle_sni(
+                ssl_socket: ssl.SSLSocket,
+                server_name: str | None,
+                initial_context: ssl.SSLContext,
+            ) -> None:
+                del initial_context
+                if server_name is None:
+                    return
+
+                normalized_name = server_name.rstrip('.').lower()
+                if (
+                    normalized_name == RBOLOCK_DOMAIN or
+                    normalized_name.endswith(f'.{RBOLOCK_DOMAIN}')
+                ):
+                    ssl_socket.context = rbolock_context
+
+            ctx.set_servername_callback(handle_sni)
+
         return ctx
 
     def __init__(
         self,
-        *args,
-        cert_path: str = 'server.pem',
-        key_path: str = 'server-key.pem',
-        **kwargs,
+        *args, **kwargs,
     ) -> None:
-        self.cert_path = cert_path
-        self.key_path = key_path
         super().__init__(*args, **kwargs)
         self.socket = self.get_context().wrap_socket(
             self.socket,
@@ -193,28 +253,34 @@ class web_server_handler(http.server.BaseHTTPRequestHandler):
         if host_header is None:
             return False
 
-        domain_str, port_str = host_header.rsplit(':', 1)
-        self.port_num = int(port_str)
+        parsed_host = parse_host_header(host_header)
+        if parsed_host is None:
+            return False
+        domain_str, host_port = parsed_host
+        self.port_num = host_port or self.server.server_port
 
         if domain_str == '127.0.0.1':
             self.domain = 'localhost'
-        elif domain_str.startswith('['):
-            # Format IPv6 addresses.
-            self.domain = domain_str[1:-1]
         else:
-            self.domain = domain_str
+            self.domain = domain_str.lower()
+
+        scheme = 'https' if isinstance(self.server, web_server_ssl) else 'http'
+
+        display_port = host_port
+        if display_port is None and self.domain == 'localhost':
+            default_port = DEFAULT_PORTS[scheme]
+            if self.server.server_port != default_port:
+                display_port = self.server.server_port
 
         self.hostname = (
-            f'http{"s" if isinstance(self.server, web_server_ssl) else ""}://' +
-            f'{self.domain}:{self.port_num}'
+            f'{scheme}://' +
+            format_hostname(self.domain, display_port)
         )
 
         self.is_valid_request = True
         self.game_config = self.server.game_config
 
-        # Some endpoints should only allow the RCC to do stuff.
-        # TODO: use a proper allow-listing system.
-        self.is_privileged = self.domain == 'localhost'
+        self.is_privileged = self.domain in PRIVILEGED_DOMAINS
 
         self.url = f'{self.hostname}{self.path}'
         assert isinstance(self.url, str)
@@ -229,6 +295,12 @@ class web_server_handler(http.server.BaseHTTPRequestHandler):
             for i, v in self.query_lists.items()
         }
         return True
+
+    def should_use_frontend_proxy(self) -> bool:
+        return not (
+            self.domain == RBOLOCK_DOMAIN or
+            self.domain.endswith(f'.{RBOLOCK_DOMAIN}')
+        )
 
     def handle_request(self) -> None:
         should_print_exception = True
@@ -308,6 +380,9 @@ class web_server_handler(http.server.BaseHTTPRequestHandler):
         self,
         fallback_on_error: bool = False,
     ) -> bool:
+        if not self.should_use_frontend_proxy():
+            return False
+
         proxy_url = self.server.frontend_proxy
         if proxy_url is None:
             return False

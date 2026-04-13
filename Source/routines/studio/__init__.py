@@ -49,6 +49,9 @@ class obj_type(logic.bin_entry, logic.loggable_entry, logic.gameconfig_entry):
         return self.game_config.retr_version()
 
     def save_starter_scripts(self) -> None:
+        if util.versions.rōblox != util.versions.rōblox.v463 or util.versions.rōblox != util.versions.rōblox.v347:
+            return
+
         server_path = self.get_versioned_path(os.path.join(
             'Content',
             'Scripts',
@@ -58,6 +61,30 @@ class obj_type(logic.bin_entry, logic.loggable_entry, logic.gameconfig_entry):
         with open(server_path, 'w', encoding='utf-8') as f:
             startup_script = startup_scripts.get_script(self.game_config)
             f.write(startup_script)
+
+    def patch_cacert_pem(self) -> None:
+        '''
+        Appends the RFD CA root certificate to Studio's ssl/cacert.pem so that
+        libcurl-based requests trust our HTTPS server. For v535+, we also install
+        the CA to the Windows root store (see install_ca_to_windows_root) so
+        that Studio's content provider trusts asset fetches.
+        '''
+        if self.retr_version() != util.versions.rōblox.v535:
+            return
+        ca_pem = util.ssl_context.get_ca_pem_bytes()
+        cacert_path = self.get_versioned_path('ssl', 'cacert.pem')
+        if not os.path.isfile(cacert_path):
+            return
+
+        with open(cacert_path, 'rb') as f:
+            existing = f.read()
+
+        if ca_pem in existing:
+            return
+
+        with open(cacert_path, 'ab') as f:
+            f.write(b'\n# RFD CA\n')
+            f.write(ca_pem)
 
     @functools.cache
     def setup_place(self) -> str:
@@ -84,6 +111,15 @@ class obj_type(logic.bin_entry, logic.loggable_entry, logic.gameconfig_entry):
         super().bootstrap()
         self.save_app_settings()
         self.make_aux_directories()
+
+        match self.retr_version():
+            case util.versions.rōblox.v463, util.versions.rōblox.v347:
+                return
+            case _:
+                util.ssl_context.install_ca_to_windows_root(self.logger)
+                if util.ssl_context.use_rblxhub_certs():
+                    util.ssl_context._ensure_rbolock_hosts(self.logger)
+
         self.save_starter_scripts()
         time.sleep(self.launch_delay)
         self.init_popen(

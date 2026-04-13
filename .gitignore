@@ -22,7 +22,7 @@ frm.cfg
 *.spec
 *.sqlite
 /GameConfig.toml
-Source/ssl/?*.*
+#Source/ssl/?*.*
 Source/.venv/
 
 # Created by https://www.toptal.com/developers/gitignore/api/python

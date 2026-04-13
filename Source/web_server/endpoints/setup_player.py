@@ -8,7 +8,6 @@ import util.const
 from web_server._logic import web_server_handler, server_path, web_server_ssl
 import util.versions as versions
 
-
 @server_path('/rfd/default-user-code')
 def _(self: web_server_handler) -> bool:
     result = self.game_config.server_core.retrieve_default_user_code()
@@ -53,6 +52,23 @@ def _(self: web_server_handler) -> bool:
     self.send_data(bytes(version.name, encoding='utf-8'))
     return True
 
+@server_path('/rfd/set-proxy-target')
+def _(self: web_server_handler) -> bool:
+    '''
+    Called by the player routine before launching the Roblox client.
+    Updates the rbolock.tk reverse proxy target so the client's HTTPS
+    traffic is forwarded to the correct remote server IP.
+    Has no effect when the proxy is not running (non-rblxhub-cert mode).
+
+    https://github.com/mytailcaughtonfire/RFD-2022/blob/52c5e3f25e3f48c290002b6ae7c01e272eb969cd/Source/web_server/endpoints/setup_player.py#L125
+    '''
+    host = self.query.get('host', '127.0.0.1')
+    port = int(self.query.get('port', str(util.const.RFD_DEFAULT_PORT)))
+    proxy = getattr(self.server, 'proxy', None)
+    if proxy is not None:
+        proxy.set_target(host, port)
+    self.send_data(b'ok')
+    return True
 
 @server_path('/game/validate-machine')
 def _(self: web_server_handler) -> bool:
@@ -120,6 +136,15 @@ def _(self: web_server_handler) -> bool:
         self.send_json(json.load(f))
     return True
 
+@server_path('/v2/settings/application/PCStudioApp')
+def _(self: web_server_handler) -> bool:
+    fflags_path = util.resource.retr_full_path(
+        util.resource.dir_type.WORKING_DIR,
+        'windows_2026_fflags.json',
+    )
+    with open(fflags_path, 'r', encoding='utf-8') as f:
+        self.send_json(json.load(f))
+    return True
 
 @server_path('/v1/player-policies-client')
 def _(self: web_server_handler) -> bool:

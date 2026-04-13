@@ -97,7 +97,7 @@ class popen_entry(base_entry):
                 'Attempted to open a new EXE on a terminated routine.'
             )
 
-        # Checks if Wine is installed.  Redundant if using Windows.
+        # Checks if Wine is installed. Redundant if using Windows.
         if shutil.which('wine') is not None:
             params = ('wine', exe_path, *cmd_args)
         else:
@@ -294,7 +294,9 @@ class bin_entry(popen_entry, loggable_entry):
         '''
         Updates the FFlags in the game configuration.
         '''
-        # TODO: move FFlag loading to an API endpoint.
+        if util.versions.rōblox != util.versions.rōblox.v463:
+            return
+
         new_flags = {
             **self.logger.rcc_logs.get_level_table(),
         }

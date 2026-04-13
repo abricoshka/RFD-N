@@ -73,8 +73,110 @@ def _(self: web_server_handler) -> bool:
 
 
 @server_path('/my/settings/json', commands={'GET'})
+@util.auth.authenticated_required_api
 def _(self: web_server_handler) -> bool:
-    self.send_json({})
+    user = util.auth.GetCurrentUser(self)
+    if user is not None:
+        user_id = user.id
+        username = user.username
+        account_age = str(user.created)
+    else:
+        session_raw = self.headers.get('Roblox-Session-Id')
+        if session_raw:
+            try:
+                session = json.loads(session_raw)
+                user_id = session.get("UserId", 1)
+            except Exception:
+                user_id = 1
+        else:
+            user_id = 1
+        username = "Roblox"
+        account_age = 360
+
+    self.send_json({
+        'ChangeUsernameEnabled': True,
+        'IsAdmin': True,
+        'UserId': user_id,
+        'Name': username,
+        'DisplayName': username,
+        'IsEmailOnFile': True,
+        'IsEmailVerified': True,
+        'IsPhoneFeatureEnabled': True,
+        'RobuxRemainingForUsernameChange': 9999999,
+        'PreviousUserNames': '',
+        'UseSuperSafePrivacyMode': False,
+        'IsAppChatSettingEnabled': True,
+        'IsGameChatSettingEnabled': True,
+        'IsParentalSpendControlsEnabled': True,
+        'IsSetPasswordNotificationEnabled': False,
+        'ChangePasswordRequiresTwoStepVerification': False,
+        'ChangeEmailRequiresTwoStepVerification': False,
+        'UserEmail': 'r*********@example.com',
+        'UserEmailMasked': True,
+        'UserEmailVerified': True,
+        'CanHideInventory': True,
+        'CanTrade': True,
+        'MissingParentEmail': False,
+        'IsUpdateEmailSectionShown': True,
+        'IsUnder13UpdateEmailMessageSectionShown': False,
+        'IsUserConnectedToFacebook': False,
+        'IsTwoStepToggleEnabled': False,
+        'AgeBracket': 0,
+        'UserAbove13': True,
+        'ClientIpAddress': self.domain,
+        'AccountAgeInDays': account_age,
+        'IsPremium': False,
+        'IsBcRenewalMembership': False,
+        'PremiumFeatureId': None,
+        'HasCurrencyOperationError': False,
+        'CurrencyOperationErrorMessage': None,
+        'Tab': None,
+        'ChangePassword': False,
+        'IsAccountPinEnabled': False,
+        'IsAccountRestrictionsFeatureEnabled': False,
+        'IsAccountRestrictionsSettingEnabled': False,
+        'IsAccountSettingsSocialNetworksV2Enabled': False,
+        'IsUiBootstrapModalV2Enabled': True,
+        'IsDateTimeI18nPickerEnabled': True,
+        'InApp': False,
+        'MyAccountSecurityModel': {
+            'IsEmailSet': True,
+            'IsEmailVerified': True,
+            'IsTwoStepEnabled': False,
+            'ShowSignOutFromAllSessions': True,
+            'TwoStepVerificationViewModel': {
+                'UserId': 1,
+                'IsEnabled': False,
+                'CodeLength': 0,
+                'ValidCodeCharacters': None,
+            },
+        },
+        'ApiProxyDomain': self.hostname,
+        'AccountSettingsApiDomain': self.hostname,
+        'AuthDomain': self.hostname,
+        'IsDisconnectFacebookEnabled': True,
+        'IsDisconnectXboxEnabled': True,
+        'NotificationSettingsDomain': self.hostname,
+        'AllowedNotificationSourceTypes': [
+            'Test', 'FriendRequestReceived', 'FriendRequestAccepted',
+            'PartyInviteReceived', 'PartyMemberJoined', 'ChatNewMessage',
+            'PrivateMessageReceived', 'UserAddedToPrivateServerWhiteList',
+            'ConversationUniverseChanged', 'TeamCreateInvite', 'GameUpdate',
+            'DeveloperMetricsAvailable', 'GroupJoinRequestAccepted',
+            'Sendr', 'ExperienceInvitation',
+        ],
+        'AllowedReceiverDestinationTypes': ['NotificationStream'],
+        'BlacklistedNotificationSourceTypesForMobilePush': [],
+        'MinimumChromeVersionForPushNotifications': 50,
+        'PushNotificationsEnabledOnFirefox': False,
+        'LocaleApiDomain': self.hostname,
+        'HasValidPasswordSet': True,
+        'IsFastTrackAccessible': False,
+        'HasFreeNameChange': False,
+        'IsAgeDownEnabled': True,
+        'IsDisplayNamesEnabled': True,
+        'IsBirthdateLocked': False,
+    })
     return True
 
 @server_path('/universal-app-configuration/v1/behaviors/studio/content')

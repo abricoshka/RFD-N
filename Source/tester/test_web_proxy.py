@@ -1,5 +1,7 @@
 # Standard library imports
 import dataclasses
+import http.client
+import json
 import socket
 import ssl
 import threading
@@ -21,6 +23,22 @@ def get_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(('127.0.0.1', 0))
         return sock.getsockname()[1]
+
+
+def get_unique_free_ports(count: int) -> list[int]:
+    sockets: list[socket.socket] = []
+    try:
+        for _ in range(count):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(('127.0.0.1', 0))
+            sockets.append(sock)
+        return [
+            sock.getsockname()[1]
+            for sock in sockets
+        ]
+    finally:
+        for sock in sockets:
+            sock.close()
 
 
 class frontend_handler(BaseHTTPRequestHandler):
@@ -74,8 +92,12 @@ class TestWebProxy(unittest.TestCase):
     @override
     @classmethod
     def setUpClass(cls) -> None:
-        cls.frontend_port = get_free_port()
-        cls.web_port = get_free_port()
+        (
+            cls.frontend_port,
+            cls.web_port,
+            cls.rbolock_proxy_port,
+            cls.rbolock_http_proxy_port,
+        ) = get_unique_free_ports(4)
         cls.logged_lines: list[str] = []
         cls.test_logger = dataclasses.replace(
             logger.PRINT_REASONABLE,
@@ -110,6 +132,8 @@ class TestWebProxy(unittest.TestCase):
                 is_ipv6=False,
                 is_ssl=True,
                 frontend_proxy=f'http://127.0.0.1:{cls.frontend_port}',
+                rbolock_proxy_port=cls.rbolock_proxy_port,
+                rbolock_http_proxy_port=cls.rbolock_http_proxy_port,
             ),
         )
         time.sleep(1)
@@ -138,6 +162,61 @@ class TestWebProxy(unittest.TestCase):
                 response.read().decode('utf-8'),
             )
 
+    @classmethod
+    def read_url_with_host(
+        cls,
+        path: str,
+        host: str,
+        *,
+        port: int | None = None,
+    ) -> tuple[int, http.client.HTTPMessage, str]:
+        connection = http.client.HTTPSConnection(
+            '127.0.0.1',
+            cls.web_port if port is None else port,
+            context=cls.ssl_context,
+            timeout=5,
+        )
+        try:
+            connection.request(
+                'GET',
+                path,
+                headers={'Host': host},
+            )
+            response = connection.getresponse()
+            body = response.read().decode('utf-8')
+            headers = response.headers
+            status = response.status
+            return (status, headers, body)
+        finally:
+            connection.close()
+
+    @classmethod
+    def read_http_url_with_host(
+        cls,
+        path: str,
+        host: str,
+        *,
+        port: int | None = None,
+    ) -> tuple[int, http.client.HTTPMessage, str]:
+        connection = http.client.HTTPConnection(
+            '127.0.0.1',
+            cls.rbolock_http_proxy_port if port is None else port,
+            timeout=5,
+        )
+        try:
+            connection.request(
+                'GET',
+                path,
+                headers={'Host': host},
+            )
+            response = connection.getresponse()
+            body = response.read().decode('utf-8')
+            headers = response.headers
+            status = response.status
+            return (status, headers, body)
+        finally:
+            connection.close()
+
     def test_root_is_forwarded_to_frontend(self) -> None:
         status, proxy_target, body = self.read_url('/')
         self.assertEqual(status, 200)
@@ -149,6 +228,51 @@ class TestWebProxy(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(proxy_target, 'frontend')
         self.assertEqual(body, 'frontend:/app/dashboard')
+
+    def test_rbolock_root_stays_on_webserver_without_port_in_host(self) -> None:
+        status, headers, body = self.read_url_with_host('/', 'rbolock.tk')
+
+        self.assertEqual(status, 200)
+        self.assertIsNone(headers.get('x-proxy-target'))
+        self.assertIn('Roblox Freedom Distribution webserver', body)
+
+    def test_rbolock_proxy_port_forwards_to_webserver(self) -> None:
+        status, headers, body = self.read_url_with_host(
+            '/',
+            'rbolock.tk',
+            port=self.rbolock_proxy_port,
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIsNone(headers.get('x-proxy-target'))
+        self.assertIn('Roblox Freedom Distribution webserver', body)
+
+    def test_rbolock_http_proxy_port_forwards_to_webserver(self) -> None:
+        status, headers, body = self.read_http_url_with_host(
+            '/',
+            'www.rbolock.tk',
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIsNone(headers.get('x-proxy-target'))
+        self.assertIn('Roblox Freedom Distribution webserver', body)
+
+    def test_rbolock_unknown_path_does_not_fall_back_to_frontend(self) -> None:
+        status, headers, body = self.read_url_with_host('/app/dashboard', 'rbolock.tk')
+
+        self.assertEqual(status, 404)
+        self.assertIsNone(headers.get('x-proxy-target'))
+        self.assertIn('Nothing matches the given URI', body)
+
+    def test_rbolock_api_subdomain_hits_local_endpoint_without_port_in_host(self) -> None:
+        status, headers, body = self.read_url_with_host(
+            '/game/validate-machine',
+            'api.rbolock.tk',
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIsNone(headers.get('x-proxy-target'))
+        self.assertEqual(json.loads(body), {"success": True})
 
     def test_event_stream_is_forwarded_without_buffering(self) -> None:
         request = urllib.request.Request(
