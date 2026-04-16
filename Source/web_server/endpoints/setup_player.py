@@ -6,6 +6,7 @@ import json
 import assets.returns as returns
 import util.const
 from web_server._logic import web_server_handler, server_path, web_server_ssl
+import web_server.settings_files
 import util.versions as versions
 
 @server_path('/rfd/default-user-code')
@@ -70,6 +71,7 @@ def _(self: web_server_handler) -> bool:
     self.send_data(b'ok')
     return True
 
+@server_path("/validate-machine")
 @server_path('/game/validate-machine')
 def _(self: web_server_handler) -> bool:
     self.send_json({"success": True})
@@ -115,12 +117,9 @@ def _(self: web_server_handler) -> bool:
 @server_path('/v1/settings/application')
 def _(self: web_server_handler) -> bool:
     if self.query.get('applicationName') == 'AndroidApp':
-        fflags_path = util.resource.retr_full_path(
-            util.resource.dir_type.WORKING_DIR,
-            'android_fflags.json',
+        self.send_json(
+            web_server.settings_files.read_settings_json('android_fflags.json'),
         )
-        with open(fflags_path, 'r', encoding='utf-8') as f:
-            self.send_json(json.load(f))
     else:
         self.send_json({'applicationSettings': {}})
 
@@ -128,23 +127,72 @@ def _(self: web_server_handler) -> bool:
 
 @server_path('/v2/settings/application/PCStudioApp', versions={versions.rōblox.v574})
 def _(self: web_server_handler) -> bool:
-    fflags_path = util.resource.retr_full_path(
-        util.resource.dir_type.WORKING_DIR,
-        'windows_2023_fflags.json',
+    self.send_json(
+        web_server.settings_files.read_settings_json(
+            'windows_2023_fflags.json',
+        ),
     )
-    with open(fflags_path, 'r', encoding='utf-8') as f:
-        self.send_json(json.load(f))
     return True
 
-@server_path('/v2/settings/application/PCStudioApp')
+@server_path(
+    '/v2/settings/application/PCStudioApp',
+    versions=set(versions.VERSION_MAP.values()) - {versions.VERSION_MAP['v574']},
+)
 def _(self: web_server_handler) -> bool:
-    fflags_path = util.resource.retr_full_path(
-        util.resource.dir_type.WORKING_DIR,
-        'windows_2026_fflags.json',
+    self.send_json(
+        web_server.settings_files.read_settings_json(
+            'windows_2026_fflags.json',
+        ),
     )
-    with open(fflags_path, 'r', encoding='utf-8') as f:
-        self.send_json(json.load(f))
     return True
+
+
+@server_path('/v2/settings-compressed/application/PCDesktopClient.zst')
+def _(self: web_server_handler) -> bool:
+    self.send_json(
+        web_server.settings_files.read_settings_json(
+            'PCDesktopClient.zst',
+        ),
+    )
+    return True
+
+@server_path('/v2/settings/application/PCDesktopClient')
+def _(self: web_server_handler) -> bool:
+    self.send_json(
+        web_server.settings_files.read_settings_json(
+            'PCDesktopClient.json',
+        ),
+    )
+    return True
+
+@server_path(
+    r'/v2/settings-compressed/application/PCDesktopClient/([0-9a-fA-F]{64})\.dcz',
+    regex=True,
+    commands={'GET'},
+)
+def _(self: web_server_handler, match: re.Match[str]) -> bool:
+    del match
+    _file_path, payload = web_server.settings_files.read_matching_settings_bytes(
+        '*.dcz',
+    )
+    self.send_data(
+        payload,
+        content_type='application/octet-stream',
+    )
+    return True
+
+
+@server_path('/v2/client-version/WindowsStudio64')
+@server_path('/v2/client-version/WindowsPlayer')
+def _(self: web_server_handler) -> bool:
+    self.send_json({
+        "version": "0.712.0.7120919",
+        "clientVersionUpload": "version-8764cc9c84a5459a",
+        "bootstrapperVersion": "0.712.0.7120919",
+        "nextClientVersionUpload": None,
+        "nextClientVersion": None
+    }, 200)
+
 
 @server_path('/v1/player-policies-client')
 def _(self: web_server_handler) -> bool:
@@ -154,6 +202,14 @@ def _(self: web_server_handler) -> bool:
         'isPaidItemTradingAllowed': True,
         'areAdsAllowed': True,
     })
+    return True
+
+
+# Stubs
+@server_path('/v1/agreements-resolution/Web')
+@server_path('/v2/ota-version/WindowsPlayer')
+def _(self: web_server_handler) -> bool:
+    self.send_json([])
     return True
 
 
@@ -200,4 +256,21 @@ def _(self: web_server_handler, match: re.Match[str]) -> bool:
         )
 
     self.send_json({"isAdminDeveloperConsoleEnabled": result})
+    return True
+
+
+@server_path("/v1/locales/user-localization-locus-supported-locales")
+def _(self: web_server_handler) -> bool:
+    self.send_json({"signupAndLogin": {"id": 1, "locale": "en_us", "name": "English (United States)",
+                                       "nativeName": "English (United States)",
+                                       "language": {"id": 41, "name": "English", "nativeName": "English",
+                                                    "languageCode": "en", "isRightToLeft": False}},
+                    "generalExperience": {"id": 1, "locale": "en_us", "name": "English (United States)",
+                                          "nativeName": "English (United States)",
+                                          "language": {"id": 41, "name": "English", "nativeName": "English",
+                                                       "languageCode": "en", "isRightToLeft": False}},
+                    "ugc": {"id": 1, "locale": "en_us", "name": "English (United States)",
+                            "nativeName": "English (United States)",
+                            "language": {"id": 41, "name": "English", "nativeName": "English", "languageCode": "en",
+                                         "isRightToLeft": False}}, "showRobloxTranslations": False})
     return True

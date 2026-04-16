@@ -25,11 +25,14 @@ if TYPE_CHECKING:
 
 
 AUTH_COOKIE_NAME = ".ROBLOSECURITY"
+GLOBAL_COOKIE_DOMAIN = ".rbolock.tk"
 DEFAULT_TOKEN_EXPIRY = 60 * 60 * 24 * 31
 DEFAULT_TICKET_EXPIRY = 60 * 10
-USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,20}$")
-PASSWORD_MIN_LENGTH = 4
-PASSWORD_MAX_LENGTH = 128
+USERNAME_ALLOWED_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
+USERNAME_MIN_LENGTH = 3
+USERNAME_MAX_LENGTH = 20
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 200
 AUTH_TICKET_KIND_LOGIN = "login"
 AUTH_TICKET_KIND_TWO_STEP = "two_step"
 P = ParamSpec("P")
@@ -54,20 +57,39 @@ def _build_cookie_header(
     name: str,
     value: str,
     *,
+    domain: str | None = None,
     max_age: int | None = None,
     expires: str | None = None,
+    secure: bool = False,
+    samesite: str = "Lax",
 ) -> str:
     cookie = SimpleCookie()
     cookie[name] = value
     morsel = cookie[name]
     morsel["path"] = "/"
     morsel["httponly"] = True
-    morsel["samesite"] = "Lax"
+    morsel["samesite"] = samesite
+    if domain is not None:
+        morsel["domain"] = domain
     if max_age is not None:
         morsel["max-age"] = str(max_age)
     if expires is not None:
         morsel["expires"] = expires
+    if secure:
+        morsel["secure"] = True
     return cookie.output(header="").strip()
+
+
+def _uses_global_cookie_domain(self: web_server_handler) -> bool:
+    domain = getattr(self, "domain", "")
+    if not isinstance(domain, str) or not domain:
+        return False
+    root_domain = GLOBAL_COOKIE_DOMAIN.removeprefix(".")
+    normalized_domain = domain.strip(".").lower()
+    return (
+        normalized_domain == root_domain or
+        normalized_domain.endswith(f".{root_domain}")
+    )
 
 
 def SetAuthCookie(
@@ -75,25 +97,33 @@ def SetAuthCookie(
     token: str,
     expireIn: int = DEFAULT_TOKEN_EXPIRY,
 ) -> None:
+    use_global_cookie_domain = _uses_global_cookie_domain(self)
     self.send_header(
         "Set-Cookie",
         _build_cookie_header(
             AUTH_COOKIE_NAME,
             token,
+            domain=GLOBAL_COOKIE_DOMAIN if use_global_cookie_domain else None,
             max_age=expireIn,
+            secure=use_global_cookie_domain,
+            samesite="None" if use_global_cookie_domain else "Lax",
         ),
     )
     _sync_player_cookie_store(self, token)
 
 
 def ClearAuthCookie(self: web_server_handler) -> None:
+    use_global_cookie_domain = _uses_global_cookie_domain(self)
     self.send_header(
         "Set-Cookie",
         _build_cookie_header(
             AUTH_COOKIE_NAME,
             "",
+            domain=GLOBAL_COOKIE_DOMAIN if use_global_cookie_domain else None,
             max_age=0,
             expires="Thu, 01 Jan 1970 00:00:00 GMT",
+            secure=use_global_cookie_domain,
+            samesite="None" if use_global_cookie_domain else "Lax",
         ),
     )
     _sync_player_cookie_store(self, None)
@@ -110,6 +140,8 @@ def _get_player_cookie_hosts(self: web_server_handler) -> set[str]:
     domain = getattr(self, "domain", None)
     if isinstance(domain, str) and domain:
         hosts.add(domain)
+        if _uses_global_cookie_domain(self):
+            hosts.add(GLOBAL_COOKIE_DOMAIN)
 
     if "localhost" in hosts:
         hosts.add("127.0.0.1")
@@ -145,8 +177,8 @@ def _get_request_token(self: web_server_handler) -> str | None:
         return header_token.strip()
 
     syntax_session = (
-        _get_cookie_value(self, "Syntax-Session-Id") or
-        self.headers.get("Syntax-Session-Id")
+        _get_cookie_value(self, "Roblox-Session-Id") or
+        self.headers.get("Roblox-Session-Id")
     )
     if syntax_session is None:
         return None
@@ -197,23 +229,48 @@ def _extract_password(payload: dict[str, Any]) -> str:
     return str(password)
 
 
+def ValidateUsernameResult(
+    storage: storager,
+    username: str,
+) -> tuple[int, str]:
+    if not (USERNAME_MIN_LENGTH <= len(username) <= USERNAME_MAX_LENGTH):
+        return (3, "Usernames can be 3 to 20 characters long")
+    if username.endswith("_"):
+        return (4, "Username can't end with _")
+    if username.count("_") > 1:
+        return (5, "Usernames can have at most one _")
+    if not USERNAME_ALLOWED_PATTERN.fullmatch(username):
+        return (7, "Only a-z, A-Z, 0-9, and _ are allowed")
+    if storage.user.get_id_from_username(username) is not None:
+        return (1, "Username is already in use")
+    return (0, "Username is valid")
+
+
 def ValidateUsername(
     storage: storager,
     username: str,
 ) -> str | None:
-    if not USERNAME_PATTERN.fullmatch(username):
-        return "Username must be 3-20 characters and contain only letters, numbers, and underscores"
-    if storage.user.get_id_from_username(username) is not None:
-        return "Username is already in use"
-    return None
+    code, message = ValidateUsernameResult(storage, username)
+    return None if code == 0 else message
 
 
-def ValidatePasswordString(password: str) -> str | None:
-    if len(password) < PASSWORD_MIN_LENGTH:
-        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters long"
-    if len(password) > PASSWORD_MAX_LENGTH:
-        return f"Password must be at most {PASSWORD_MAX_LENGTH} characters long"
-    return None
+def ValidatePasswordStringResult(
+    password: str,
+    username: str = "",
+) -> tuple[int, str]:
+    if not (PASSWORD_MIN_LENGTH <= len(password) <= PASSWORD_MAX_LENGTH):
+        return (2, "Password must be between 8 and 200 characters long")
+    if username and password.casefold() == username.casefold():
+        return (3, "Password must not be your username")
+    return (0, "Password is valid")
+
+
+def ValidatePasswordString(
+    password: str,
+    username: str = "",
+) -> str | None:
+    code, message = ValidatePasswordStringResult(password, username)
+    return None if code == 0 else message
 
 
 def GetTokenInfo(
@@ -408,16 +465,26 @@ def GetUserPayload(user: user_item) -> dict[str, int | str]:
     }
 
 
+def GetAuthenticatedAppLaunchInfoPayload(user: user_item) -> dict[str, object]:
+    return {
+        "ageBracket": 0,
+        "countryCode": "US",
+        "isPremium": False,
+        "hasRobloxSubscription": False,
+        **GetUserPayload(user),
+    }
+
+
 def _send_api_auth_error(
     self: web_server_handler,
     *,
-    message: str = "User not authenticated",
+    message: str = "Authentication cookie is empty",
     clear_cookie: bool = False,
 ) -> None:
     self.send_response(401)
     if clear_cookie:
         ClearAuthCookie(self)
-    self.send_json({"error": message}, status=None)
+    self.send_json({"errors":[{"code":0,"message":message}]}, status=None)
 
 
 def _send_redirect_to_login(
@@ -653,7 +720,7 @@ def CreateUser(
     username_error = ValidateUsername(storage, username)
     if username_error is not None:
         return None
-    password_error = ValidatePasswordString(password)
+    password_error = ValidatePasswordString(password, username)
     if password_error is not None:
         return None
 
@@ -686,12 +753,29 @@ def HandleAuthenticatedUserEndpoint(self: web_server_handler) -> bool:
     return True
 
 
+def HandleAuthenticatedAppLaunchInfoEndpoint(
+    self: web_server_handler,
+) -> bool:
+    token = _get_request_token(self)
+    if token is None:
+        _send_api_auth_error(self)
+        return True
+
+    user = GetCurrentUser(self)
+    if user is None:
+        _send_api_auth_error(self, clear_cookie=True)
+        return True
+
+    self.send_json(GetAuthenticatedAppLaunchInfoPayload(user))
+    return True
+
+
 def HandleLogin(self: web_server_handler) -> bool:
     try:
         payload = _read_json_object(self)
     except Exception:
         self.send_json(
-            {"errors": [{"message": "Malformed JSON body"}]},
+            {"errors": [{"code": 0, "message": "Malformed JSON body"}]},
             400,
         )
         return True
@@ -700,7 +784,7 @@ def HandleLogin(self: web_server_handler) -> bool:
     password = _extract_password(payload)
     if not username or not password:
         self.send_json(
-            {"errors": [{"message": "Username and password are required"}]},
+            {"errors": [{"code": 0, "message": "Username and password are required"}]},
             400,
         )
         return True
@@ -711,14 +795,14 @@ def HandleLogin(self: web_server_handler) -> bool:
         self.send_response(401)
         ClearAuthCookie(self)
         self.send_json(
-            {"errors": [{"message": "Invalid username or password"}]},
+            {"errors": [{"code": 0, "message": "Invalid username or password"}]},
             status=None,
         )
         return True
 
     if user.accountstatus <= 0:
         self.send_json(
-            {"errors": [{"message": "User is not active"}], "isBanned": True},
+            {"errors": [{"code": 0, "message": "User is not active"}], "isBanned": True},
             403,
         )
         return True
@@ -747,7 +831,7 @@ def HandleSignup(self: web_server_handler) -> bool:
         payload = _read_json_object(self)
     except Exception:
         self.send_json(
-            {"errors": [{"message": "Malformed JSON body"}]},
+            {"errors": [{"code": 0, "message": "Malformed JSON body"}]},
             400,
         )
         return True
@@ -756,7 +840,7 @@ def HandleSignup(self: web_server_handler) -> bool:
     password = _extract_password(payload)
     if not username or not password:
         self.send_json(
-            {"errors": [{"message": "Username and password are required"}]},
+            {"errors": [{"code": 0, "message": "Username and password are required"}]},
             400,
         )
         return True
@@ -765,15 +849,15 @@ def HandleSignup(self: web_server_handler) -> bool:
     username_error = ValidateUsername(storage, username)
     if username_error is not None:
         self.send_json(
-            {"errors": [{"message": username_error}]},
+            {"errors": [{"code": 0, "message": username_error}]},
             409,
         )
         return True
 
-    password_error = ValidatePasswordString(password)
+    password_error = ValidatePasswordString(password, username)
     if password_error is not None:
         self.send_json(
-            {"errors": [{"message": password_error}]},
+            {"errors": [{"code": 0, "message": password_error}]},
             400,
         )
         return True
@@ -781,7 +865,7 @@ def HandleSignup(self: web_server_handler) -> bool:
     user = CreateUser(storage, username, password)
     if user is None:
         self.send_json(
-            {"errors": [{"message": "Failed to create user"}]},
+            {"errors": [{"code": 0, "message": "Failed to create user"}]},
             500,
         )
         return True

@@ -66,7 +66,7 @@ class TestServer(unittest.TestCase):
 
     def test_servers_started(self) -> None:
         '''
-        Tests whether RFD correclty signals that the port is opened for TCP and UDP.
+        Tests whether RFD correctly signals that the port is opened for TCP and UDP.
         '''
         self.assertIn(f'UDP {self.random_port}', self.all_log_text)
         self.assertIn(f'TCP {self.random_port}', self.all_log_text)

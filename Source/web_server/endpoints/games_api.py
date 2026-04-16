@@ -10,14 +10,14 @@ def _format_api_datetime(value: str) -> str:
     except ValueError:
         return value
 
-@server_path(r'/alerts/alert-info', commands={'GET'})
+@server_path('/maintenance-status/v1/alerts/alert-info', commands={'GET'})
+@server_path('/alerts/alert-info', commands={'GET'})
 def _(self: web_server_handler) -> bool:
-    self.send_response(200)
-    self.send_header("Content-Type", "application/json")
     self.send_json({"IsVisible": True, "Text": "RFD btw.", "LinkText": "", "LinkUrl": ""})
     return True
 
-@server_path(r'/v1/games/list', commands={'GET'})
+
+@server_path('/v1/games/list', commands={'GET'})
 def _(self: web_server_handler) -> bool:
     sort_token = self.query.get("sort_token") or "MostPopular"
     try:

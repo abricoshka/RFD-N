@@ -268,6 +268,40 @@ class database(_logic.sqlite_connector_base):
             TOTPEnabled=bool(row[6]),
         )
 
+    def check_object_from_username_casefold(self, username: str) -> user_item | None:
+        result = self.sqlite.execute_and_fetch(
+            query=f"""
+            SELECT
+            {self.field.ID.value},
+            {self.field.USERNAME.value},
+            {self.field.PASSWORD.value},
+            {self.field.CREATED.value},
+            {self.field.DESCRIPTION.value},
+            {self.field.LASTONLINE.value},
+            {self.field.ACCOUNTSTATUS.value},
+            {self.field.TOTP_ENABLED.value}
+
+            FROM "{self.TABLE_NAME}"
+            WHERE lower({self.field.USERNAME.value}) = lower(?)
+            LIMIT 1
+            """,
+            values=(username,),
+        )
+        row = self.unwrap_result(result)
+        if row is None:
+            return None
+
+        return user_item(
+            id=int(row[0]),
+            username=str(row[1]),
+            password=str(row[2]),
+            created=str(row[3]),
+            description=str(row[4]),
+            lastonline=str(row[5]),
+            accountstatus=int(row[6]),
+            TOTPEnabled=bool(row[7]),
+        )
+
     def update_lastonline(
         self,
         user_id: int,

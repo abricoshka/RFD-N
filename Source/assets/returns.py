@@ -8,6 +8,7 @@ class base_type:
 @dataclasses.dataclass
 class ret_none(base_type):
     error: str | None = None
+    status: int | None = None
 
 
 @dataclasses.dataclass
@@ -24,11 +25,12 @@ def construct(
     data: bytes | None = None,
     redirect_url: str | None = None,
     error: str | None = None,
+    status: int | None = None,
 ) -> base_type:
     if data is not None:
         return ret_data(data)
     elif redirect_url is not None:
         return ret_relocate(redirect_url)
-    elif error is not None:
-        return ret_none(error)
+    elif error is not None or status is not None:
+        return ret_none(error, status)
     return ret_none()

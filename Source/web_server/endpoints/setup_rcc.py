@@ -94,14 +94,6 @@ def _(self: web_server_handler) -> bool:
     return True
 
 
-@server_path('/v1.1/Counters/BatchIncrement')
-@server_path('/v1.0/SequenceStatistics/BatchAddToSequencesV2')
-@server_path('/v1.1/Counters/Increment/') # Android
-def _(self: web_server_handler) -> bool:
-    self.send_json({})
-    return True
-
-
 @server_path('/universal-app-configuration/v1/behaviors/app-patch/content')
 def _(self: web_server_handler) -> bool:
     self.send_json({

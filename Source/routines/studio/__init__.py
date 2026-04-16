@@ -13,8 +13,7 @@ from config_type.types import wrappers
 from .. import _logic as logic
 import util.resource
 import util.versions
-import game_config
-import logger
+import util.ssl_context
 
 
 @dataclasses.dataclass(kw_only=True, unsafe_hash=True)

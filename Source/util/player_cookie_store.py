@@ -173,7 +173,18 @@ def get_cookie_value(
     preferred_hosts = normalise_hosts(preferred_hosts)
     if preferred_hosts:
         for entry in entries:
-            if entry.domain.lower() in preferred_hosts:
+            entry_domain = entry.domain.lower()
+            if entry_domain in preferred_hosts:
+                return entry.value
+            if not entry.include_subdomains:
+                continue
+
+            wildcard_domain = entry_domain.removeprefix(".")
+            if any(
+                host == wildcard_domain or
+                host.endswith(f".{wildcard_domain}")
+                for host in preferred_hosts
+            ):
                 return entry.value
 
     return entries[0].value
@@ -238,7 +249,7 @@ def sync_auth_cookie(
         for host in sorted(normalised_hosts):
             entries.append(cookie_entry(
                 domain=host,
-                include_subdomains=False,
+                include_subdomains=host.startswith("."),
                 path="/",
                 secure=True,
                 expiry="0",

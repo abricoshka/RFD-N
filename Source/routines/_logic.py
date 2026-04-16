@@ -272,14 +272,14 @@ class bin_entry(popen_entry, loggable_entry):
         '''
         path = self.get_versioned_path('AppSettings.xml')
         app_base_url = self.get_app_base_url()
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(textwrap.dedent(f'''\
-                <?xml version="1.0" encoding="UTF-8"?>
-                <Settings>
-                    <ContentFolder>Content</ContentFolder>
-                    <BaseUrl>{app_base_url}</BaseUrl>
-                </Settings>
-            '''))
+        # with open(path, 'w', encoding='utf-8') as f:
+        #     f.write(textwrap.dedent(f'''\
+        #         <?xml version="1.0" encoding="UTF-8"?>
+        #         <Settings>
+        #             <ContentFolder>Content</ContentFolder>
+        #             <BaseUrl>{app_base_url}</BaseUrl>
+        #         </Settings>
+        #     '''))
         return path
 
     def make_aux_directories(self):

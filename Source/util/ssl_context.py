@@ -36,9 +36,11 @@ RBOLOCK_SERVER_HOSTS = (
     '*.api.rbolock.tk',
 )
 RBLXHUB_CERT_CANDIDATES = (
-    os.path.join(PROJECT_SSL_DIR, 'wildcard.crt'),
-    os.path.join(PROJECT_SSL_DIR, 'wildcard.key'),
-    os.path.join(PROJECT_SSL_DIR, 'rbolock-ca.crt'),
+    (
+        os.path.join(PROJECT_SSL_DIR, 'wildcard.crt'),
+        os.path.join(PROJECT_SSL_DIR, 'wildcard.key'),
+        os.path.join(PROJECT_SSL_DIR, 'rbolock-ca.crt'),
+    ),
 )
 LOCALHOST_CERT_CANDIDATES = (
     (

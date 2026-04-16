@@ -32,6 +32,121 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def format_api_datetime(value: str | None) -> str | None:
+    if value is None:
+        return None
+    for parser in (
+        datetime.fromisoformat,
+        lambda raw: datetime.strptime(raw, "%Y-%m-%d %H:%M:%S"),
+    ):
+        try:
+            date_value = parser(value)
+            break
+        except ValueError:
+            continue
+    else:
+        return value
+
+    if date_value.tzinfo is None:
+        date_value = date_value.replace(tzinfo=UTC)
+    else:
+        date_value = date_value.astimezone(UTC)
+    return date_value.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def get_creator_type_name(creator_type: int) -> str:
+    return "User" if creator_type == 0 else "Group"
+
+
+def get_creator_name(
+    self: web_server_handler,
+    creator_type: int,
+    creator_id: int,
+) -> str:
+    if creator_type == 0:
+        user = self.server.storage.user.check_object(creator_id)
+        if user is not None:
+            return user.username
+
+        username = self.server.storage.players.get_player_field_from_index(
+            index=self.server.storage.players.player_field.IDEN_NUM,
+            value=creator_id,
+            field=self.server.storage.players.player_field.USERNAME,
+        )
+        if isinstance(username, str) and username:
+            return username
+
+    return str(creator_id)
+
+
+def build_asset_details_payload(
+    self: web_server_handler,
+    asset_id: int,
+):
+    asset_obj = self.server.storage.asset.resolve_object(asset_id)
+    if asset_obj is None:
+        return None
+
+    canonical_asset_id = asset_obj.roblox_asset_id or asset_obj.id
+    creator_type_name = get_creator_type_name(asset_obj.creator_type)
+    creator_name = get_creator_name(
+        self,
+        asset_obj.creator_type,
+        asset_obj.creator_id,
+    )
+    remaining = None
+    if asset_obj.is_limited or asset_obj.is_limited_unique:
+        remaining = max(0, asset_obj.serial_count - asset_obj.sale_count)
+
+    return {
+        'TargetId': canonical_asset_id,
+        'ProductType': 'User Product',
+        'AssetId': canonical_asset_id,
+        'ProductId': canonical_asset_id,
+        'Name': asset_obj.name,
+        'Description': asset_obj.description,
+        'AssetTypeId': asset_obj.asset_type.value,
+        'Creator': {
+            'Id': asset_obj.creator_id,
+            'Name': creator_name,
+            'CreatorType': creator_type_name,
+            'CreatorTargetId': asset_obj.creator_id,
+            'HasVerifiedBadge': False,
+        },
+        'IconImageAssetId': 0,
+        'Created': format_api_datetime(asset_obj.created_at),
+        'Updated': format_api_datetime(asset_obj.updated_at),
+        'PriceInRobux': (
+            asset_obj.price_robux
+            if asset_obj.is_for_sale else
+            None
+        ),
+        'PriceInTickets': (
+            asset_obj.price_tix
+            if asset_obj.is_for_sale else
+            None
+        ),
+        'Sales': asset_obj.sale_count,
+        'IsNew': False,
+        'IsForSale': asset_obj.is_for_sale,
+        'IsPublicDomain': False,
+        'IsLimited': asset_obj.is_limited,
+        'IsLimitedUnique': asset_obj.is_limited_unique,
+        'Remaining': remaining,
+        'MinimumMembershipLevel': 0,
+        'ContentRatingTypeId': 0,
+        'SaleAvailabilityLocations': None,
+        'SaleLocation': None,
+        'CollectibleItemId': (
+            str(canonical_asset_id)
+            if asset_obj.is_limited_unique else
+            None
+        ),
+        'CollectibleProductId': None,
+        'CollectiblesItemDetails': None,
+    }
+
+
 def make_join_user(
     current_user,
     *,
@@ -733,4 +848,21 @@ def send_get_join_script(self: web_server_handler) -> bool:
         'jobId': '67',
         'prefix': launch_url,
     })
+    return True
+
+@server_path(r'/v2/assets/(\d+)/details', regex=True)
+def _(self: web_server_handler, match) -> bool:
+    payload = build_asset_details_payload(self, int(match.group(1)))
+    if payload is None:
+        self.send_json({
+            "errors": [
+                {
+                    "code": 0,
+                    "message": "Asset not found.",
+                }
+            ]
+        }, 404)
+        return True
+
+    self.send_json(payload)
     return True

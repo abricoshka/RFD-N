@@ -1,11 +1,4 @@
-import random
-
 from web_server._logic import web_server_handler, server_path
-
-@server_path('/device/initialize', commands={'POST'})
-def _(self: web_server_handler) -> bool:
-    self.send_json({"browserTrackerId": random.randint(100000000,9999999999), "appDeviceIdentifier": None})
-    return True
 
 @server_path('/v1/mobile-client-version')
 @server_path('/mobileapi/check-app-version')

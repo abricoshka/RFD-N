@@ -1,7 +1,4 @@
-# pyright: reportImportCycles=false
-# TODO: simplify import heirarchy
-
-# Standard library imports
+﻿# Standard library imports
 from typing import Callable
 import dataclasses
 import functools
@@ -10,7 +7,7 @@ import shutil
 
 # Internal or local application imports
 import util.const
-from . import material, queue, returns, serialisers, extractor, thumbnail
+from . import material, queue, returns, serialisers, extractor
 
 
 @dataclasses.dataclass
@@ -28,6 +25,17 @@ class asset_redirect:
     forward_url: str | None = None
     raw_data: bytes | None = None
     cmd_line: str | None = None
+
+
+# Accept headers that indicate a DXT-compressed texture request.
+# These must be forwarded verbatim to Roblox CDN and must bypass
+# serialisers.parse() and the asset cache (they're format-specific).
+_DXT_ACCEPT_HEADERS = frozenset({
+    'rbx-format/color_dxt',
+    'rbx-format/spec_dxt',
+    'rbx-format/norm_dxt',
+    'ktx/dxt',
+})
 
 
 class asseter:
@@ -50,6 +58,23 @@ class asseter:
                 os.makedirs(dir_path)
         else:
             os.makedirs(dir_path)
+
+    def get_ktx_asset_path(self, asset_id: int, accept: str = '') -> str:
+        # Sanitize accept header into a safe filename suffix
+        # e.g. 'rbx-format/color_dxt' -> 'color_dxt'
+        suffix = accept.replace('rbx-format/', '').replace('/', '_').replace('*', 'any')
+        key = f'{asset_id}-ktx-{suffix}' if suffix else f'{asset_id}-ktx'
+        return self.get_asset_path(key)
+
+    def get_ktx_asset(self, asset_id: int, accept: str) -> bytes | None:
+        ktx_path = self.get_ktx_asset_path(asset_id, accept)  # now accept-aware
+        cached = self._load_file(ktx_path)
+        if cached is not None:
+            return cached
+        data = self._load_online_asset(asset_id, accept=accept)
+        if data is not None:
+            self._save_file(ktx_path, data)
+        return data
 
     @functools.cache
     def get_asset_path(self, asset_id: int | str) -> str:
@@ -86,7 +111,16 @@ class asseter:
         except OSError:  # Might occur when the asset iden is too long.
             pass
 
-    def _load_online_asset(self, asset_id: int) -> bytes | None:
+    def _load_online_asset(self, asset_id: int, accept: str | None = None) -> bytes | None:
+        # DXT texture requests must be forwarded with the Accept header and
+        # must NOT go through serialisers.parse() — they're raw binary formats
+        # that the parsers don't understand and would corrupt or discard.
+        if accept is not None and accept in _DXT_ACCEPT_HEADERS:
+            return self.queuer.get(
+                (asset_id, accept),
+                lambda key: extractor.download_rōblox_asset(key[0], accept=key[1]),
+            )
+
         data = self.queuer.get(asset_id, extractor.download_rōblox_asset)
         if data is None:
             return None
@@ -110,10 +144,6 @@ class asseter:
     def resolve_asset_query(self, query: dict[str, str]) -> int | str | None:
         candidate_funcs = [
             (query.get('id'), self.resolve_asset_id),
-            (query.get('aid'), self.resolve_asset_id),
-            (query.get('AssetID'), self.resolve_asset_id),
-            (query.get('assetid'), self.resolve_asset_id),
-            (query.get('assetId'), self.resolve_asset_id),
             (query.get('assetversionid'), self.resolve_asset_version_id),
         ]
 
@@ -142,14 +172,12 @@ class asseter:
             return True
         return False
 
-    def _load_asset_num(self, asset_id: int) -> bytes | None:
-        return self._load_online_asset(asset_id)
+    def _load_asset_num(self, asset_id: int, accept: str | None = None) -> bytes | None:
+        return self._load_online_asset(asset_id, accept=accept)
 
     def _load_asset_str(self, asset_id: str) -> bytes | None:
         if material.check(asset_id):
             return material.load_asset(asset_id)
-        if thumbnail.check(asset_id):
-            return thumbnail.load_asset(asset_id)
         return None
 
     def _load_redir_asset(self, asset_id: int | str, redirect: asset_redirect) -> returns.base_type:
@@ -185,17 +213,32 @@ class asseter:
 
         if isinstance(asset_id, str):
             remote_data = self._load_asset_str(asset_id)
-        else:
-            remote_data = self._load_asset_num(asset_id)
+            return returns.construct(data=remote_data)
+
+        remote_data = self._load_asset_num(asset_id)
+        if isinstance(remote_data, extractor.download_failure):
+            return returns.construct(
+                error=remote_data.message,
+                status=remote_data.status,
+            )
         return returns.construct(data=remote_data)
 
     def get_asset(
         self,
         asset_id: int | str,
-        bypass_blocklist: bool = False
+        bypass_blocklist: bool = False,
+        accept: str | None = None,
     ) -> returns.base_type:
         if not bypass_blocklist and self.is_blocklisted(asset_id):
             returns.construct(error='Asset is blocklisted.')
+
+        # DXT texture requests get assets with a -ktx suffix.
+        if accept is not None and accept in _DXT_ACCEPT_HEADERS:
+            if isinstance(asset_id, int):
+                data = self.get_ktx_asset(asset_id, accept)
+                return returns.construct(data=data)
+            print(f'[dxt] couldnt get a ktx asset for asset_id={asset_id} accept={accept}')
+            return returns.construct()
 
         asset_path = self.get_asset_path(asset_id)
         local_data = self._load_file(asset_path)

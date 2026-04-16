@@ -16,3 +16,8 @@ class PlaceYear(Enum):
     Twenty = 2020
     TwentyOne = 2021
     TwentyTwo = 2022
+    TwentyThree = 2023
+    TwentyFour = 2024
+    TwentyFive = 2025
+    TwentySix = 2026
+    TwentySeven = 2027

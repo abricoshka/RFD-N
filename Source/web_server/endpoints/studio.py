@@ -1,10 +1,17 @@
 # Standard library imports
+from datetime import UTC, datetime
 import json
 import time
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
 
 # Local application imports
 import util.auth
-import util.resource
+import util.versions
+import web_server.endpoints.join_data as join_data
+import web_server.settings_files
 from web_server._logic import web_server_handler, server_path
 
 
@@ -18,11 +25,6 @@ def _(self: web_server_handler) -> bool:
 def _(self: web_server_handler) -> bool:
     self.send_data(self.hostname + '/login/negotiate.ashx')
     return True
-
-
-@server_path('/v2/login')
-def _(self: web_server_handler) -> bool:
-    return util.auth.HandleLogin(self)
 
 
 @server_path('/Users/1630228')
@@ -181,10 +183,205 @@ def _(self: web_server_handler) -> bool:
 
 @server_path('/universal-app-configuration/v1/behaviors/studio/content')
 def _(self: web_server_handler) -> bool:
-    config_path = util.resource.retr_full_path(
-        util.resource.dir_type.WORKING_DIR,
-        'app_config_studio.json',
+    self.send_json(
+        web_server.settings_files.read_settings_json(
+            'app_config_studio.json',
+        ),
     )
-    with open(config_path, 'r', encoding='utf-8') as f:
-        self.send_json(json.load(f))
+    return True
+
+
+@server_path("/v1/not-approved")
+def _(self: web_server_handler) -> bool:
+    self.send_json({"notApproved": False}, 200)
+    return True
+
+
+def _format_studio_datetime(value: str) -> str:
+    for parser in (
+            datetime.fromisoformat,
+            lambda raw: datetime.strptime(raw, "%Y-%m-%d %H:%M:%S"),
+    ):
+        try:
+            date_value = parser(value)
+            break
+        except ValueError:
+            continue
+    else:
+        return value
+
+    if date_value.tzinfo is None:
+        date_value = date_value.replace(tzinfo=UTC)
+    else:
+        date_value = date_value.astimezone(UTC)
+    return date_value.isoformat(timespec="milliseconds")
+
+
+def _resolve_open_place_context(self: web_server_handler):
+    storage = self.server.storage
+    query = self.query
+
+    universe_id_str = (
+            query.get("universeId") or
+            query.get("universeid") or
+            query.get("UniverseId")
+    )
+    if universe_id_str:
+        try:
+            universe_id = int(universe_id_str)
+        except ValueError:
+            return None
+        universe_obj = storage.universe.check(universe_id)
+        if universe_obj is None:
+            return None
+        root_place_id = universe_obj[0]
+        place_obj = storage.place.check_object(root_place_id)
+        if place_obj is None or place_obj.assetObj is None:
+            return None
+        return (universe_id, universe_obj, place_obj)
+
+    place_id_str = (
+            query.get("placeId") or
+            query.get("placeid") or
+            query.get("PlaceId") or
+            query.get("assetId") or
+            query.get("assetid") or
+            query.get("AssetId")
+    )
+    if place_id_str:
+        try:
+            place_id = int(place_id_str)
+        except ValueError:
+            return None
+    else:
+        place_id = None
+
+    if place_id is None:
+        universe_obj = storage.universe.check(1)
+        if universe_obj is None:
+            return None
+        place_id = universe_obj[0]
+    else:
+        universe_obj = storage.universe.check_from_root_place_id(place_id)
+        if universe_obj is None:
+            return None
+
+    universe_id = storage.universe.get_id_from_root_place_id(place_id)
+    if universe_id is None:
+        return None
+
+    place_obj = storage.place.check_object(place_id)
+    if place_obj is None or place_obj.assetObj is None:
+        return None
+    return (universe_id, universe_obj, place_obj)
+
+
+@server_path("/studio-open-place/v1/openplace")
+def _(self: web_server_handler) -> bool:
+    resolved = _resolve_open_place_context(self)
+    if resolved is None:
+        self.send_json({
+            "errors": [{
+                "message": "Place not found.",
+            }],
+        }, 404)
+        return True
+
+    universe_id, universe_obj, place_obj = resolved
+    asset_obj = place_obj.assetObj
+    assert asset_obj is not None
+
+    creator_type_name = join_data.get_creator_type_name(universe_obj[2])
+    creator_target_id = universe_obj[1]
+    self.send_json({
+        "universe": {
+            "Id": universe_id,
+            "RootPlaceId": place_obj.placeid,
+            "Name": asset_obj.name,
+            "IsArchived": False,
+            "CreatorType": creator_type_name,
+            "CreatorTargetId": creator_target_id,
+            "PrivacyType": "Public" if universe_obj[11] else "Private",
+            "Created": _format_studio_datetime(universe_obj[3]),
+            "Updated": _format_studio_datetime(universe_obj[4]),
+        },
+        "teamCreateEnabled": False,
+        "place": {
+            "Creator": {
+                "CreatorType": creator_type_name,
+                "CreatorTargetId": creator_target_id,
+            }
+        }
+    })
+    return True
+
+
+@server_path("/v1/gametemplates")
+def _(self: web_server_handler) -> bool:
+    query = dict(self.query)
+    query.setdefault("limit", "53")
+    upstream_url = "https://develop.roblox.com/v1/gametemplates"
+    encoded_query = urllib.parse.urlencode(query)
+    if encoded_query:
+        upstream_url = f"{upstream_url}?{encoded_query}"
+
+    request = urllib.request.Request(
+        upstream_url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": self.headers.get("User-Agent", "RFD/1.0"),
+        },
+        method="GET",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = response.read()
+            content_type = (
+                    response.headers.get("Content-Type") or
+                    "application/json"
+            )
+            self.send_data(
+                payload,
+                status=response.status,
+                content_type=content_type,
+            )
+            return True
+    except urllib.error.HTTPError as error:
+        error_body = error.read()
+        content_type = (
+                           error.headers.get("Content-Type")
+                           if error.headers is not None
+                           else None
+                       ) or "application/json"
+        self.send_data(
+            error_body,
+            status=error.code,
+            content_type=content_type,
+        )
+        return True
+    except urllib.error.URLError:
+        self.send_json(
+            {"errors": [{"message": "Failed to reach develop.roblox.com"}]},
+            502,
+        )
+    return True
+
+
+# TODO: Proper API handling
+@server_path(r'/studio-user-settings/v1/user/studiodata/CloudEditKey_placeId(\d+)', regex=True)
+def _(self: web_server_handler, match: re.Match[str]) -> bool:
+    self.send_json(
+        {
+            "camera": {
+                "data": "PHJvYmxveCGJ/w0KGgoAAAEAAAABAAAAAAAAAAAAAABJTlNUGQAAABcAAAAAAAAA8AgAAAAABgAAAENhbWVyYQABAAAAAAAAAFBST1AiAAAAIAAAAAAAAADwEQAAAAATAAAAQXR0cmlidXRlc1NlcmlhbGl6ZQEAAAAAUFJPUEIAAABAAAAAAAAAAPAxAAAAAAYAAABDRnJhbWUQANfEEr9ME7g91XtQPwAAAIB8dH4/IKrgveW/Ub/FzYC9FeIRv4Kr8aKEPLMIhjtD61BST1AcAAAAGgAAAAAAAADwCwAAAAANAAAAQ2FtZXJhU3ViamVjdBMAAAABUFJPUBkAAAAXAAAAAAAAAPAIAAAAAAoAAABDYW1lcmFUeXBlEgAAAABQUk9QHwAAAB0AAAAAAAAA8A4AAAAADAAAAENhcGFiaWxpdGllcyEAAAAAAAAAAFBST1AfAAAAHQAAAAAAAADwDgAAAAATAAAARGVmaW5lc0NhcGFiaWxpdGllcwIAUFJPUBoAAAAYAAAAAAAAAPAJAAAAAAsAAABGaWVsZE9mVmlldwSFGAAAUFJPUB4AAAAcAAAAAAAAAPANAAAAAA8AAABGaWVsZE9mVmlld01vZGUSAAAAAFBST1AdAAAAGwAAAAAAAADwDAAAAAAFAAAARm9jdXMQAoJ30rSEPnRchjj8Y1BST1AWAAAAFAAAAAAAAADwBQAAAAAKAAAASGVhZExvY2tlZAIBUFJPUBgAAAAWAAAAAAAAAPAHAAAAAAkAAABIZWFkU2NhbGUEfwAAAFBST1AZAAAAFwAAAAAAAADwCAAAAAAEAAAATmFtZQEGAAAAQ2FtZXJhUFJPUCAAAAAeAAAAAAAAAPAPAAAAAA0AAABTb3VyY2VBc3NldElkGwAAAAAAAAABUFJPUBMAAAARAAAAAAAAAPACAAAAAAQAAABUYWdzAQAAAABQUk9QIAAAAB4AAAAAAAAA8A8AAAAAFAAAAFZSVGlsdEFuZFJvbGxFbmFibGVkAgBQUk5UDgAAAA0AAAAAAAAA0AABAAAAAAAAAAAAAAFFTkQAAAAAAAkAAAAAAAAAPC9yb2Jsb3g+"
+            }
+        },
+        200)
+    return True
+
+
+@server_path("/asset-permissions-api/v1/assets/check-permissions")
+def _(self: web_server_handler) -> bool:
+    self.send_json({"results": [{"value": {"status": "NoPermission"}}]}, 200)
     return True

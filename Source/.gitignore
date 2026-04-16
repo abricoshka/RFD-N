@@ -5,3 +5,6 @@ AssetCache
 # Certificates
 server.pem
 server-key.pem
+
+# Debug cache/data
+web_server/endpoints/batch_dumps

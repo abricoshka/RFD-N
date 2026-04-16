@@ -17,6 +17,8 @@ import storage
 import util.auth
 import util.player_cookie_store
 import util.versions
+import web_server._logic as web_logic
+import web_server.endpoints.authentication as authentication_api
 import web_server.endpoints.badges as badges_api
 import web_server.endpoints.funds as funds_api
 import web_server.endpoints.join_data as join_data
@@ -64,6 +66,7 @@ class fake_handler:
             key: value[0]
             for key, value in self.query_lists.items()
         }
+        self.command = "GET"
         self.hostname = "https://localhost:2005"
         self.port_num = 2005
         self.domain = "localhost"
@@ -88,6 +91,9 @@ class fake_handler:
 
     def end_headers(self) -> None:
         return
+
+    def send_error(self, status: int) -> None:
+        self.status_code = status
 
     def send_json(
         self,
@@ -164,6 +170,21 @@ class TestAuth(unittest.TestCase):
                 return cookie[cookie_name].value
         return None
 
+    @staticmethod
+    def call_endpoint(
+        path: str,
+        handler: fake_handler,
+        command: str = "GET",
+    ) -> bool:
+        for key, func in web_logic.SERVER_FUNCS.items():
+            if (
+                key.mode == web_logic.func_mode.STATIC and
+                key.path == path and
+                key.command == command
+            ):
+                return func(handler)
+        raise AssertionError(f"Endpoint not found: {command} {path}")
+
     def test_signup_login_and_authenticated_user_flow(self) -> None:
         data_storage = self.make_storage()
         signup_handler = fake_handler(
@@ -210,6 +231,223 @@ class TestAuth(unittest.TestCase):
         self.assertTrue(util.auth.HandleAuthenticatedUserEndpoint(current_user_handler))
         self.assertEqual(current_user_handler.status_code, 200)
         self.assertEqual(current_user_handler.json_body["name"], "Tester_One")
+
+        app_launch_handler = fake_handler(
+            data_storage,
+            cookie_header=f"{util.auth.AUTH_COOKIE_NAME}={login_token}",
+        )
+        self.assertTrue(
+            util.auth.HandleAuthenticatedAppLaunchInfoEndpoint(
+                app_launch_handler,
+            ),
+        )
+        self.assertEqual(app_launch_handler.status_code, 200)
+        self.assertEqual(
+            app_launch_handler.json_body,
+            {
+                "ageBracket": 0,
+                "countryCode": "US",
+                "isPremium": False,
+                "hasRobloxSubscription": False,
+                "id": current_user_handler.json_body["id"],
+                "name": "Tester_One",
+                "displayName": "Tester_One",
+            },
+        )
+
+    def test_validate_username_result_matches_roblox_messages(self) -> None:
+        data_storage = self.make_storage()
+        existing_user = util.auth.CreateUser(
+            data_storage,
+            "TakenUser",
+            "secret123",
+        )
+        self.assertIsNotNone(existing_user)
+
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "ab"),
+            (3, "Usernames can be 3 to 20 characters long"),
+        )
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "abc_"),
+            (4, "Username can’t end with _"),
+        )
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "ab_c_d"),
+            (5, "Usernames can have at most one _"),
+        )
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "ab!"),
+            (7, "Only a-z, A-Z, 0-9, and _ are allowed"),
+        )
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "TakenUser"),
+            (1, "Username is already in use"),
+        )
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "Valid_User1"),
+            (0, "Username is valid"),
+        )
+
+    def test_validate_password_string_result_matches_roblox_messages(self) -> None:
+        self.assertEqual(
+            util.auth.ValidatePasswordStringResult("1234567", "ExampleUser123"),
+            (2, "Password must be between 8 and 200 characters long"),
+        )
+        self.assertEqual(
+            util.auth.ValidatePasswordStringResult("a" * 201, "ExampleUser123"),
+            (2, "Password must be between 8 and 200 characters long"),
+        )
+        self.assertEqual(
+            util.auth.ValidatePasswordStringResult(
+                "ExampleUser123",
+                "ExampleUser123",
+            ),
+            (3, "Password must not be your username"),
+        )
+        self.assertEqual(
+            util.auth.ValidatePasswordStringResult(
+                "strongPass123",
+                "ExampleUser123",
+            ),
+            (0, "Password is valid"),
+        )
+
+    def test_signup_rejects_password_matching_username(self) -> None:
+        data_storage = self.make_storage()
+        handler = fake_handler(
+            data_storage,
+            body=json.dumps({
+                "username": "ExampleUser123",
+                "password": "ExampleUser123",
+            }).encode("utf-8"),
+        )
+
+        self.assertTrue(util.auth.HandleSignup(handler))
+        self.assertEqual(handler.status_code, 400)
+        self.assertEqual(
+            handler.json_body,
+            {
+                "errors": [{
+                    "code": 0,
+                    "message": "Password must not be your username",
+                }],
+            },
+        )
+
+    def test_v2_usernames_validate_requires_birthday_or_authenticated_user(self) -> None:
+        handler = fake_handler(
+            self.make_storage(),
+            query={
+                "context": "Signup",
+                "username": "Valid_User1",
+            },
+        )
+
+        self.assertTrue(self.call_endpoint('/v2/usernames/validate', handler))
+        self.assertEqual(
+            handler.json_body,
+            {
+                "errors": [{
+                    "code": 2,
+                    "message": "A valid birthday or authenticated user is required.",
+                }],
+            },
+        )
+
+    def test_v2_usernames_validate_allows_authenticated_user_without_birthday(self) -> None:
+        data_storage = self.make_storage()
+        user = util.auth.CreateUser(
+            data_storage,
+            "SignedInUser",
+            "secret123",
+        )
+        self.assertIsNotNone(user)
+        assert user is not None
+
+        token = util.auth.CreateToken(
+            data_storage,
+            user.id,
+            "127.0.0.1",
+        )
+        handler = fake_handler(
+            data_storage,
+            cookie_header=f"{util.auth.AUTH_COOKIE_NAME}={token}",
+            query={
+                "context": "Signup",
+                "request.username": "Fresh_User1",
+            },
+        )
+
+        self.assertTrue(self.call_endpoint('/v2/usernames/validate', handler))
+        self.assertEqual(
+            handler.json_body,
+            {
+                "code": 0,
+                "message": "Username is valid",
+            },
+        )
+
+    def test_v2_usernames_validate_post_reads_json_body(self) -> None:
+        handler = fake_handler(
+            self.make_storage(),
+            body=json.dumps({
+                "username": "ab_c_d",
+                "birthday": "2000-01-01T00:00:00.000Z",
+                "context": "Signup",
+            }).encode("utf-8"),
+        )
+        handler.command = "POST"
+
+        self.assertTrue(
+            self.call_endpoint('/v2/usernames/validate', handler, command="POST"),
+        )
+        self.assertEqual(
+            handler.json_body,
+            {
+                "code": 5,
+                "message": "Usernames can have at most one _",
+            },
+        )
+
+    def test_signup_is_password_valid_returns_roblox_style_response(self) -> None:
+        handler = fake_handler(
+            self.make_storage(),
+            query={
+                "request.username": "ExampleUser123",
+                "request.password": "ExampleUser123",
+            },
+        )
+
+        self.assertTrue(self.call_endpoint('/signup/is-password-valid', handler))
+        self.assertEqual(
+            handler.json_body,
+            {
+                "code": 3,
+                "message": "Password must not be your username",
+            },
+        )
+
+    def test_v2_passwords_validate_post_reads_json_body(self) -> None:
+        handler = fake_handler(
+            self.make_storage(),
+            body=json.dumps({
+                "username": "ExampleUser123",
+                "password": "ExampleUser123",
+            }).encode("utf-8"),
+        )
+        handler.command = "POST"
+
+        self.assertTrue(
+            self.call_endpoint('/v2/passwords/validate', handler, command="POST"),
+        )
+        self.assertEqual(
+            handler.json_body,
+            {
+                "code": 3,
+                "message": "Password must not be your username",
+            },
+        )
 
     def test_legacy_password_migrates_to_argon2(self) -> None:
         data_storage = self.make_storage()
@@ -331,6 +569,113 @@ class TestAuth(unittest.TestCase):
         self.assertEqual(
             handler.json_body,
             {"errors": [{"code": 3, "message": "The user id is invalid."}]},
+        )
+
+    def test_v1_usernames_users_looks_up_users_case_insensitively(self) -> None:
+        data_storage = self.make_storage()
+        first_user = util.auth.CreateUser(
+            data_storage,
+            "LookupUser",
+            "secret123",
+        )
+        second_user = util.auth.CreateUser(
+            data_storage,
+            "SecondUser",
+            "secret123",
+        )
+        self.assertIsNotNone(first_user)
+        self.assertIsNotNone(second_user)
+        assert first_user is not None
+        assert second_user is not None
+
+        handler = fake_handler(
+            data_storage,
+            body=json.dumps({
+                "usernames": [
+                    "lookupuser",
+                    "LOOKUPUSER",
+                    "SecondUser",
+                    "missing_user",
+                ],
+                "excludeBannedUsers": False,
+            }).encode("utf-8"),
+        )
+        handler.command = "POST"
+        handler.headers["Content-Type"] = "application/json"
+
+        self.assertTrue(
+            self.call_endpoint('/v1/usernames/users', handler, command="POST"),
+        )
+        self.assertEqual(
+            handler.json_body,
+            {
+                "data": [
+                    {
+                        "requestedUsername": "lookupuser",
+                        "hasVerifiedBadge": False,
+                        "id": first_user.id,
+                        "name": "LookupUser",
+                        "displayName": "LookupUser",
+                    },
+                    {
+                        "requestedUsername": "SecondUser",
+                        "hasVerifiedBadge": False,
+                        "id": second_user.id,
+                        "name": "SecondUser",
+                        "displayName": "SecondUser",
+                    },
+                ],
+            },
+        )
+
+    def test_v1_usernames_users_rejects_non_json_media_type(self) -> None:
+        handler = fake_handler(
+            self.make_storage(),
+            body=b'{"usernames":["LookupUser"]}',
+        )
+        handler.command = "POST"
+
+        self.assertTrue(
+            self.call_endpoint('/v1/usernames/users', handler, command="POST"),
+        )
+        self.assertEqual(handler.status_code, 415)
+        self.assertEqual(
+            handler.json_body,
+            {"errors": [{"code": 0, "message": "UnsupportedMediaType"}]},
+        )
+
+    def test_product_experimentation_player_app_login_returns_null_value(self) -> None:
+        handler = fake_handler(
+            self.make_storage(),
+            query={"parameters": "isDesktopDualLoginEnabled"},
+        )
+
+        self.assertTrue(
+            self.call_endpoint(
+                '/product-experimentation-platform/v1/projects/1/layers/PlayerApp.Login/values',
+                handler,
+            ),
+        )
+        self.assertEqual(
+            handler.json_body,
+            {"isDesktopDualLoginEnabled": None},
+        )
+
+    def test_product_experimentation_player_app_login_returns_cross_device_button_text(self) -> None:
+        handler = fake_handler(
+            self.make_storage(),
+            query={"parameters": "CrossDeviceButtonText"},
+        )
+
+        self.assertTrue(
+            self.call_endpoint(
+                '/product-experimentation-platform/v1/projects/1/layers/PlayerApp.Login/values',
+                handler,
+            ),
+        )
+        self.assertEqual(
+            handler.json_body,
+            {"CrossDeviceButtonText": None},
         )
 
     def test_v1_users_currency_returns_balance_for_authenticated_user(self) -> None:
@@ -689,6 +1034,48 @@ class TestAuth(unittest.TestCase):
         self.assertEqual(matching["localhost"], "local-auth-token")
         self.assertEqual(matching["127.0.0.1"], "local-auth-token")
 
+    def test_set_auth_cookie_uses_global_domain_for_rbolock_hosts(self) -> None:
+        handler = fake_handler(self.make_storage())
+        handler.domain = "auth.rbolock.tk"
+        handler.headers["Host"] = "auth.rbolock.tk"
+
+        with mock.patch('util.player_cookie_store.sync_auth_cookie') as sync_cookie:
+            util.auth.SetAuthCookie(handler, "rbolock-session-token")
+
+        cookie_header = next(
+            value
+            for key, value in handler.response_headers
+            if key == "Set-Cookie"
+        )
+        self.assertIn("Domain=.rbolock.tk", cookie_header)
+        self.assertIn("Secure", cookie_header)
+        self.assertIn("SameSite=None", cookie_header)
+        sync_cookie.assert_called_once()
+        self.assertIn("auth.rbolock.tk", sync_cookie.call_args.args[0])
+        self.assertIn(".rbolock.tk", sync_cookie.call_args.args[0])
+
+    def test_clear_auth_cookie_uses_global_domain_for_rbolock_hosts(self) -> None:
+        handler = fake_handler(self.make_storage())
+        handler.domain = "users.rbolock.tk"
+        handler.headers["Host"] = "users.rbolock.tk"
+
+        with mock.patch('util.player_cookie_store.sync_auth_cookie') as sync_cookie:
+            util.auth.ClearAuthCookie(handler)
+
+        cookie_header = next(
+            value
+            for key, value in handler.response_headers
+            if key == "Set-Cookie"
+        )
+        self.assertIn("Domain=.rbolock.tk", cookie_header)
+        self.assertIn("Max-Age=0", cookie_header)
+        self.assertIn("Secure", cookie_header)
+        self.assertIn("SameSite=None", cookie_header)
+        sync_cookie.assert_called_once_with(
+            {"users.rbolock.tk", ".rbolock.tk"},
+            None,
+        )
+
     def test_player_cookie_store_ignores_invalid_store(self) -> None:
         temp_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, temp_dir, True)
@@ -741,6 +1128,33 @@ class TestAuth(unittest.TestCase):
                 path=cookie_path,
             ),
             "local-session-token",
+        )
+
+    def test_player_cookie_store_matches_wildcard_rbolock_domain(self) -> None:
+        temp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, temp_dir, True)
+        cookie_path = util.player_cookie_store.Path(
+            os.path.join(temp_dir, "RobloxCookies.dat")
+        )
+
+        util.player_cookie_store.write_cookie_entries([
+            util.player_cookie_store.cookie_entry(
+                domain=".rbolock.tk",
+                include_subdomains=True,
+                path="/",
+                secure=True,
+                expiry="0",
+                name=".ROBLOSECURITY",
+                value="subdomain-session-token",
+            ),
+        ], cookie_path)
+
+        self.assertEqual(
+            util.player_cookie_store.get_cookie_value(
+                preferred_hosts={"users.rbolock.tk"},
+                path=cookie_path,
+            ),
+            "subdomain-session-token",
         )
 
     def test_player_launcher_prefers_authenticated_join_script(self) -> None:
@@ -878,3 +1292,55 @@ class TestAuth(unittest.TestCase):
 
         account_age = join_data.get_account_age_days(handler, user)
         self.assertGreaterEqual(account_age, 3)
+
+    def test_validate_username_result_matches_roblox_messages(self) -> None:
+        data_storage = self.make_storage()
+        existing_user = util.auth.CreateUser(
+            data_storage,
+            "TakenUser",
+            "secret123",
+        )
+        self.assertIsNotNone(existing_user)
+
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "ab"),
+            (3, "Usernames can be 3 to 20 characters long"),
+        )
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "abc_"),
+            (4, "Username can't end with _"),
+        )
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "ab_c_d"),
+            (5, "Usernames can have at most one _"),
+        )
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "ab!"),
+            (7, "Only a-z, A-Z, 0-9, and _ are allowed"),
+        )
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "TakenUser"),
+            (1, "Username is already in use"),
+        )
+        self.assertEqual(
+            util.auth.ValidateUsernameResult(data_storage, "Valid_User1"),
+            (0, "Username is valid"),
+        )
+
+    def test_signup_is_password_valid_returns_roblox_style_response(self) -> None:
+        handler = fake_handler(
+            self.make_storage(),
+            query={
+                "request.username": "ExampleUser123",
+                "request.password": "ExampleUser123",
+            },
+        )
+
+        self.assertTrue(self.call_endpoint('/signup/is-password-valid', handler))
+        self.assertEqual(
+            handler.json_body,
+            {
+                "code": 3,
+                "message": "Password must not be your username",
+            },
+        )

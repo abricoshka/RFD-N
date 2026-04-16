@@ -243,6 +243,13 @@ class web_server_handler(http.server.BaseHTTPRequestHandler):
         return self.rfile.read(length)
 
     @override
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except (ConnectionResetError, ConnectionAbortedError, ssl.SSLEOFError, BrokenPipeError):
+            return
+
+    @override
     def parse_request(self) -> bool:
         self.is_valid_request = False
         self.is_frontend_proxy_request = False
