@@ -26,7 +26,7 @@ def get_cookie_store_path() -> str:
     )
 
 
-def get_cookie_from_system() -> str | None:
+def _get_cookie_from_system() -> str | None:
     '''
     Only works on Windows systems.
     Do not count on a valid cookie being returned when you run this on a remote server.
@@ -75,7 +75,7 @@ def get_rōblox_cookie() -> str | None:
         (
             v for v in
             (
-                get_cookie_from_system(),
+                _get_cookie_from_system(),
                 os.environ.get('ROBLOSECURITY', None),
             )
             if test_cookie(v)
