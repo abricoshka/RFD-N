@@ -11,8 +11,9 @@ import util.resource
 import util.const
 import logger
 
-from routines import player, rcc, web
+from routines import player, rcc, studio_server, web
 from routines import _logic as logic
+import util.versions
 
 import launcher.subparsers._logic as sub_logic
 
@@ -260,16 +261,28 @@ def _(
                 ))
 
         if not args_ns.skip_rcc:
-            rcc_routine_args.add(
-                rcc.obj_type(
-                    # TODO: add support for RCC to connect to hosts other than `localhost`.
-                    web_host='localhost',
-                    web_port=web_port,
-                    rcc_port=rcc_port,
-                    logger=log_filter,
-                    game_config=game_config,
-                ),
-            )
+            match game_config.game_setup.roblox_version:
+                case util.versions.rōblox.v463, util.versions.rōblox.v347:
+                    rcc_routine_args.add(
+                        rcc.obj_type(
+                            # TODO: add support for RCC to connect to hosts other than `localhost`.
+                            web_host='localhost',
+                            web_port=web_port,
+                            rcc_port=rcc_port,
+                            logger=log_filter,
+                            game_config=game_config,
+                        ),
+                    )
+                case _:
+                    rcc_routine_args.add(
+                        studio_server.obj_type(
+                            web_host='localhost',
+                            web_port=web_port,
+                            rcc_port=rcc_port,
+                            logger=log_filter,
+                            game_config=game_config,
+                        ),
+                    )
 
         if args_ns.run_client:
             rcc_routine_args.add(

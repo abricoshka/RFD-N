@@ -150,6 +150,7 @@ class TestAuth(unittest.TestCase):
                 chat_style=SimpleNamespace(value="Classic"),
                 retrieve_default_funds=lambda *_args: 0,
                 retrieve_account_age=lambda *_args: 0,
+                retrieve_membership_type=lambda *_args: "None",
                 check_user_allowed=SimpleNamespace(
                     cached_call=lambda *_args: True,
                 ),
@@ -792,7 +793,7 @@ class TestAuth(unittest.TestCase):
         data_storage = self.make_storage()
         user = util.auth.CreateUser(
             data_storage,
-            "join_cookie_user",
+            "joincookie_user",
             "secret123",
         )
         self.assertIsNotNone(user)
@@ -814,19 +815,19 @@ class TestAuth(unittest.TestCase):
         join_data.perform_and_send_join(handler, {}, prefix=b"")
         self.assertEqual(handler.status_code, 200)
         self.assertEqual(handler.json_body["UserId"], user.id)
-        self.assertEqual(handler.json_body["UserName"], "join_cookie_user")
-        self.assertEqual(handler.json_body["DisplayName"], "join_cookie_user")
-        self.assertEqual(handler.json_body["UserCode"], "join_cookie_user")
+        self.assertEqual(handler.json_body["UserName"], "joincookie_user")
+        self.assertEqual(handler.json_body["DisplayName"], "joincookie_user")
+        self.assertEqual(handler.json_body["UserCode"], "joincookie_user")
         self.assertEqual(
-            data_storage.players.check("join_cookie_user"),
-            (user.id, "join_cookie_user"),
+            data_storage.players.check("joincookie_user"),
+            (user.id, "joincookie_user"),
         )
 
     def test_place_launcher_ticket_authenticates_without_cookie(self) -> None:
         data_storage = self.make_storage()
         user = util.auth.CreateUser(
             data_storage,
-            "launcher_ticket_user",
+            "launcherticket_user",
             "secret123",
         )
         self.assertIsNotNone(user)
@@ -865,7 +866,7 @@ class TestAuth(unittest.TestCase):
         data_storage = self.make_storage()
         user = util.auth.CreateUser(
             data_storage,
-            "ticket_reuse_user",
+            "ticketreuse_user",
             "secret123",
         )
         self.assertIsNotNone(user)
@@ -907,7 +908,7 @@ class TestAuth(unittest.TestCase):
         data_storage = self.make_storage()
         user = util.auth.CreateUser(
             data_storage,
-            "legacy_launcher_user",
+            "legacylauncher_user",
             "secret123",
         )
         self.assertIsNotNone(user)
@@ -917,7 +918,7 @@ class TestAuth(unittest.TestCase):
             data_storage,
             query={
                 "placeId": "1818",
-                "UserCode": "legacy_launcher_user",
+                "UserCode": "legacylauncher_user",
             },
             game_config=self.make_game_config(data_storage=data_storage),
         )
@@ -954,7 +955,7 @@ class TestAuth(unittest.TestCase):
         data_storage = self.make_storage()
         user = util.auth.CreateUser(
             data_storage,
-            "website_join_user",
+            "websitejoin_user",
             "secret123",
         )
         self.assertIsNotNone(user)
@@ -990,7 +991,7 @@ class TestAuth(unittest.TestCase):
         data_storage = self.make_storage()
         user = util.auth.CreateUser(
             data_storage,
-            "header_join_user",
+            "headerjoin_user",
             "secret123",
         )
         self.assertIsNotNone(user)

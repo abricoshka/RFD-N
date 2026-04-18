@@ -54,6 +54,57 @@ def format_api_datetime(value: str | None) -> str | None:
     return date_value.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
+def _resolve_requested_place_id(
+    self: web_server_handler,
+) -> int:
+    candidates: list[object] = [
+        self.query.get("placeId"),
+        self.query.get("PlaceId"),
+    ]
+
+    try:
+        session_payload = json.loads(
+            self.headers.get("Roblox-Session-Id", "{}"),
+        )
+    except json.JSONDecodeError:
+        session_payload = {}
+    if isinstance(session_payload, dict):
+        candidates.extend([
+            session_payload.get("placeId"),
+            session_payload.get("PlaceId"),
+        ])
+
+    raw_body = self.read_content()
+    if raw_body:
+        try:
+            body_payload = json.loads(raw_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            body_payload = None
+        if isinstance(body_payload, dict):
+            candidates.extend([
+                body_payload.get("placeId"),
+                body_payload.get("PlaceId"),
+            ])
+
+    for value in candidates:
+        if value in (None, ""):
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return util.const.PLACE_IDEN_CONST
+
+
+def _record_previously_played(
+    self: web_server_handler,
+    user_id: int,
+) -> int:
+    place_id = _resolve_requested_place_id(self)
+    self.server.storage.previously_played.update(user_id, place_id)
+    return place_id
+
+
 def get_creator_type_name(creator_type: int) -> str:
     return "User" if creator_type == 0 else "Group"
 
@@ -213,12 +264,12 @@ def get_authenticated_join_user(self: web_server_handler):
     if current_user is None or current_user.accountstatus != 1:
         return None
 
-    if not is_join_user_allowed(
-        self,
-        current_user.username,
-        current_user.username,
-    ):
-        return None
+    # if not is_join_user_allowed(
+    #     self,
+    #     current_user.username,
+    #     current_user.username,
+    # ):
+    #     return None
     return make_join_user(current_user)
 
 
@@ -524,6 +575,7 @@ def perform_and_send_join(self: web_server_handler, additional_return_data: dict
         return
 
     (id_num, username) = result
+    place_id = _record_previously_played(self, current_user.id)
     account_age = get_account_age_days(self, current_user)
     user_code = getattr(current_user, 'user_code', username)
 
@@ -545,7 +597,7 @@ def perform_and_send_join(self: web_server_handler, additional_return_data: dict
         'BaseUrl':
             self.hostname,
         'PlaceId':
-            util.const.PLACE_IDEN_CONST,
+            place_id,
         'UserName':
             username,
         'DisplayName':
@@ -645,7 +697,6 @@ def _(self: web_server_handler) -> bool:
     return True
 
 
-# FIXME: Adapt this path to mobile client (it's stuck on loading screen).
 @server_path('/v1/join-game', commands={'POST'})
 def _(self: web_server_handler) -> bool:
     config = self.game_config
@@ -667,6 +718,7 @@ def _(self: web_server_handler) -> bool:
         return True
 
     (id_num, username) = result
+    place_id = _record_previously_played(self, current_user.id)
     account_age = get_account_age_days(self, current_user)
 
     jobId = str(uuid.uuid4())
@@ -689,11 +741,11 @@ def _(self: web_server_handler) -> bool:
             jobId,
             f'{self.hostname}/v1.1/avatar-fetch?userId={id_num}',
             ticket_version=4,
-            place_id=1818,
+            place_id=place_id,
             account_age=account_age,
         ),
         "SuperSafeChat": False,
-        "PlaceId": 1818,
+        "PlaceId": place_id,
         "MeasurementUrl": "",
         "WaitingForCharacterGuid": str(uuid.uuid4()),
         "BaseUrl": self.hostname,

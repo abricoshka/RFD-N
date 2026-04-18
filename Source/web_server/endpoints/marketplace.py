@@ -30,6 +30,11 @@ def purchase_gamepass(self: web_server_handler, user_id_num: int, gamepass_id: i
         return False  # Too poor!
 
     storage.gamepasses.update(user_id_num, gamepass_id)
+    storage.user_asset.update(
+        user_id_num,
+        gamepass_id,
+        price=gamepass.price,
+    )
     storage.funds.add(user_id_num, -1 * gamepass.price)
     return True
 
@@ -490,6 +495,17 @@ def _(self: web_server_handler) -> bool:
         })
         return False
 
+    storage = self.server.storage
+    favorite_totals = storage.asset_favorite.get_totals_for_assets([
+        int(request_item.get("id") if isinstance(request_item, dict) else request_item)
+        for request_item in request_items
+        if isinstance(request_item, (int, dict))
+        and (
+            isinstance(request_item, int) or
+            request_item.get("id") is not None
+        )
+    ])
+
     data = []
     for request_item in request_items:
         if isinstance(request_item, int):
@@ -512,7 +528,7 @@ def _(self: web_server_handler) -> bool:
         if item_type not in ("Asset", "asset", 0, None):
             continue
 
-        asset_obj = self.server.storage.asset.resolve_object(item_id)
+        asset_obj = storage.asset.resolve_object(item_id)
         if asset_obj is None:
             continue
 
@@ -565,7 +581,7 @@ def _(self: web_server_handler) -> bool:
                 0,
                 asset_obj.serial_count - asset_obj.sale_count,
             ),
-            "favoriteCount": 0,
+            "favoriteCount": int(favorite_totals.get(asset_obj.id, 0)),
             "offSaleDeadline": _format_api_datetime(asset_obj.offsale_at),
             "collectibleItemId": (
                 str(asset_obj.id)

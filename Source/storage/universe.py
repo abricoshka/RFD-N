@@ -58,7 +58,7 @@ class database(_logic.sqlite_connector_base):
                 {self.field.CREATED_AT.value} DATETIME NOT NULL,
                 {self.field.UPDATED_AT.value} DATETIME NOT NULL,
                 {self.field.PLACE_RIG_CHOICE.value} INTEGER NOT NULL DEFAULT {PlaceRigChoice.UserChoice.value},
-                {self.field.PLACE_YEAR.value} INTEGER NOT NULL DEFAULT {PlaceYear.Sixteen.value},
+                {self.field.PLACE_YEAR.value} INTEGER NOT NULL DEFAULT {PlaceYear.TwentyOne.value},
                 {self.field.IS_FEATURED.value} BOOLEAN NOT NULL DEFAULT FALSE,
                 {self.field.MINIMUM_ACCOUNT_AGE.value} INTEGER NOT NULL DEFAULT 0,
                 {self.field.BC_REQUIRED.value} BOOLEAN NOT NULL DEFAULT FALSE,
@@ -127,7 +127,7 @@ class database(_logic.sqlite_connector_base):
         creator_id: int,
         creator_type: int,
         place_rig_choice: PlaceRigChoice | int = PlaceRigChoice.UserChoice,
-        place_year: PlaceYear | int = PlaceYear.Sixteen,
+        place_year: PlaceYear | int = PlaceYear.TwentyOne,
         is_featured: bool = False,
         minimum_account_age: int = 0,
         bc_required: bool = False,
@@ -319,7 +319,7 @@ class database(_logic.sqlite_connector_base):
 
         where_parts = [
             f"{self.field.IS_PUBLIC.value} = TRUE",
-            f"{self.field.PLACE_YEAR.value} = ?",
+            f"{self.field.PLACE_YEAR.value} >= ?",
         ]
         query_params: list[int | str] = [PlaceYear.Twenty.value]
 

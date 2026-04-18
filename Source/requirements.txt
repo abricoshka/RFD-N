@@ -1,3 +1,4 @@
+sqlite-worker==0.0.5
 cryptography~=44.0.1
 trustme~=1.2.0
 urllib3~=2.6.0

@@ -1780,7 +1780,7 @@ def read_mesh_v6_v7(data: bytes, offset: int, version: str) -> FileMeshData:
     # Attach bone/skinning data when present so the caller can choose v4 export.
     if has_bones:
         meshData.bones = bones
-        meshData.boneNames = bone_names_str
+        # meshData.boneNames = bone_names_str
         meshData.envelopes = envelopes
         meshData.meshSubsets = subsets
 
