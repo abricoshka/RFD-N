@@ -243,43 +243,44 @@ def _(self: web_server_handler) -> bool:
 def _(self: web_server_handler) -> bool:
     asset_cache = self.game_config.asset_cache
 
-    # Paramater can either be `id` or `assetversionid`.
-    asset_id = self.query['assetIds']
-    expected_format: str = self.query['format']
-
-    if expected_format.lower() != "png":
-        self.send_error(400)
-        return True
-    if asset_id is None:
-        self.send_error(404)
+    asset_ids_raw = self.query['assetIds']
+    if asset_ids_raw is None:
+        self.send_json({"errors": [{"code": 4, "message": "The requested Ids are invalid, of an invalid type or missing."}]}, 400)
         return True
 
-    if (
-        asset_id == util.const.PLACE_IDEN_CONST and
-        not self.is_privileged
-    ):
-        self.send_error(
-            403,
-            "Server hosters don't tend to like exposing their place files.  " +
-            "Ask them if they'd be willing to lend this one to you.",
+    asset_ids = asset_ids_raw.split(",")
+    if len(asset_ids) > 100:
+        self.send_json({"errors": [{"code": 1, "message": "There are too many requested Ids."}]}, 400)
+        return True
+
+    processed_requests = []
+    for asset_id in asset_ids:
+        try:
+            asset_id_num = int(asset_id)
+        except ValueError:
+            continue
+
+        if (
+            asset_id_num == util.const.PLACE_IDEN_CONST and
+            not self.is_privileged
+        ):
+            self.send_error(
+                403,
+                "Server hosters don't tend to like exposing their place files.  " +
+                "Ask them if they'd be willing to lend this one to you.",
+            )
+            return True
+
+        asset = asset_cache.get_asset(
+            asset_id_num,
+            bypass_blocklist=self.is_privileged,
         )
-        return True
+        if isinstance(asset, returns.ret_data):
+            processed_requests.append(asset.data)
+            return True
 
-    asset = asset_cache.get_asset(
-        asset_id,
-        bypass_blocklist=self.is_privileged,
-    )
-
-    if isinstance(asset, returns.ret_data):
-        self.send_data(asset.data)
-        return True
-    elif isinstance(asset, returns.ret_none):
-        send_asset_error(self, asset)
-        return True
-    elif isinstance(asset, returns.ret_relocate):
-        self.send_redirect(asset.url)
-        return True
-    return False
+    self.send_json({"data": processed_requests})
+    return True
 
 @server_path('/v1/assets/batch', commands={'POST'})
 def _(self: web_server_handler) -> bool:

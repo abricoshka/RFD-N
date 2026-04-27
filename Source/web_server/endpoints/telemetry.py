@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import random
 from web_server._logic import web_server_handler, server_path
 
@@ -5,6 +7,7 @@ from web_server._logic import web_server_handler, server_path
 @server_path('/mobile/pbe')
 @server_path('/studio/pbe')
 @server_path('/timespent/pbe')
+@server_path('/rcc/pbe')
 def _(self: web_server_handler) -> bool:
     self.send_json({})
     return True
@@ -73,4 +76,26 @@ def _(self: web_server_handler) -> bool:
 @server_path('/attribution/v1/events/post-authentication')
 def _(self: web_server_handler) -> bool:
     self.send_data("", 200)
+    return True
+
+@server_path('/userhub/')
+def _(self: web_server_handler) -> bool:
+    if self.headers.get('Upgrade', '').lower() == 'websocket':
+        ws_key = self.headers.get('Sec-WebSocket-Key', '')
+        accept_value = base64.b64encode(
+            hashlib.sha1(
+                (
+                    ws_key +
+                    '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+                ).encode('utf-8'),
+            ).digest(),
+        ).decode('ascii')
+        self.send_response(101)
+        self.send_header('Upgrade', 'websocket')
+        self.send_header('Connection', 'Upgrade')
+        self.send_header('Sec-WebSocket-Accept', accept_value)
+        self.end_headers()
+        return True
+
+    self.send_json({})
     return True

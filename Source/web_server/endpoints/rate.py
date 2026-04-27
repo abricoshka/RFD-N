@@ -5,7 +5,6 @@ from enums.AssetType import AssetType
 import util.auth
 from web_server._logic import server_path, web_server_handler
 
-
 OWNERSHIP_REQUIRED_VOTE_TYPES = {
     AssetType.GamePass,
     AssetType.Shirt,
@@ -54,25 +53,25 @@ def _read_json_body(self: web_server_handler) -> dict[str, object] | None:
 
 
 def _resolve_place_from_game_identifier(
-    self: web_server_handler,
-    game_id: int,
+        self: web_server_handler,
+        game_id: int,
 ):
     storage = self.server.storage
     universe = storage.universe.check(game_id)
     if universe is not None:
         place = storage.place.check_object(int(universe[0]))
         if (
-            place is not None and
-            place.assetObj is not None and
-            place.assetObj.asset_type == AssetType.Place
+                place is not None and
+                place.assetObj is not None and
+                place.assetObj.asset_type == AssetType.Place
         ):
             return place
 
     place = storage.place.check_object(game_id)
     if (
-        place is not None and
-        place.assetObj is not None and
-        place.assetObj.asset_type == AssetType.Place
+            place is not None and
+            place.assetObj is not None and
+            place.assetObj.asset_type == AssetType.Place
     ):
         return place
 
@@ -83,8 +82,8 @@ def _resolve_place_from_game_identifier(
 
 
 def _resolve_rate_asset(
-    self: web_server_handler,
-    asset_id: int,
+        self: web_server_handler,
+        asset_id: int,
 ):
     asset = self.server.storage.asset.resolve_object(asset_id)
     if asset is not None:
@@ -97,8 +96,8 @@ def _resolve_rate_asset(
 
 
 def GetAssetLikesAndDislikes(
-    self: web_server_handler,
-    asset_id: int,
+        self: web_server_handler,
+        asset_id: int,
 ) -> tuple[int, int]:
     return self.server.storage.asset_vote.get_totals_for_assets([asset_id]).get(
         asset_id,
@@ -107,9 +106,9 @@ def GetAssetLikesAndDislikes(
 
 
 def GetUserVoteStatus(
-    self: web_server_handler,
-    asset_id: int,
-    user_id: int,
+        self: web_server_handler,
+        asset_id: int,
+        user_id: int,
 ) -> int:
     vote = self.server.storage.asset_vote.get_user_vote(asset_id, user_id)
     if vote is None:
@@ -120,8 +119,8 @@ def GetUserVoteStatus(
 
 
 def GetAssetVotePercentage(
-    self: web_server_handler,
-    asset_id: int,
+        self: web_server_handler,
+        asset_id: int,
 ) -> int:
     likes, dislikes = GetAssetLikesAndDislikes(self, asset_id)
     total_votes = likes + dislikes
@@ -131,8 +130,8 @@ def GetAssetVotePercentage(
 
 
 def GetAssetFavoriteCount(
-    self: web_server_handler,
-    asset_id: int,
+        self: web_server_handler,
+        asset_id: int,
 ) -> int:
     return int(
         self.server.storage.asset_favorite.get_totals_for_assets([asset_id]).get(
@@ -143,17 +142,17 @@ def GetAssetFavoriteCount(
 
 
 def GetUserFavoriteStatus(
-    self: web_server_handler,
-    asset_id: int,
-    user_id: int,
+        self: web_server_handler,
+        asset_id: int,
+        user_id: int,
 ) -> bool:
     return self.server.storage.asset_favorite.check(asset_id, user_id) is not None
 
 
 def _can_user_rate_asset(
-    self: web_server_handler,
-    asset_obj,
-    user_id: int,
+        self: web_server_handler,
+        asset_obj,
+        user_id: int,
 ) -> tuple[bool, str]:
     if asset_obj.asset_type == AssetType.Place:
         if self.server.storage.previously_played.check(user_id, asset_obj.id) is None:
@@ -210,11 +209,11 @@ def _parse_vote_status(payload: dict[str, object]) -> int | None:
 
 
 def _set_asset_vote(
-    self: web_server_handler,
-    *,
-    asset_id: int,
-    user_id: int,
-    status: int,
+        self: web_server_handler,
+        *,
+        asset_id: int,
+        user_id: int,
+        status: int,
 ) -> None:
     if status == 0:
         self.server.storage.asset_vote.delete(asset_id, user_id)
@@ -503,4 +502,104 @@ def _(self: web_server_handler, match: re.Match[str]) -> bool:
         current_user.id,
     )
     self.send_json({"success": True})
+    return True
+
+
+@server_path('/abuse-reporting/v1/dynamic-dialog-sequential')
+@util.auth.authenticated_required_api
+def _(self: web_server_handler) -> bool:
+    self.send_json({"rootStepId": 0, "nodes": [{"title": "Your report has been sent.", "subtitle": "",
+                                                "actionInfo": {"predefinedNextStepId": 100, "shouldSubmit": False},
+                                                "stepId": 1, "internalStepName": "generic_legacy_success",
+                                                "isCompletionStep": True,
+                                                "innerContentConfig": {"type": "configurableComponentList",
+                                                                       "configurableComponentList": {"components": [
+                                                                           {"componentType": "paragraph",
+                                                                            "isOptional": False,
+                                                                            "requirementMessage": "", "formDataKey": "",
+                                                                            "paragraph": {
+                                                                                "text": "Thank you for your report. We will investigate further to determine if there has been a violation of our {terms}. For more information check out {safety}.",
+                                                                                "links": {
+                                                                                    "safety": {"label": "Roblox Safety",
+                                                                                               "linkButtonLabel": "Read about Roblox Safety",
+                                                                                               "url": "https://en.help.roblox.com/hc/en-us/categories/200213830-Parents-Safety-and-Moderation"},
+                                                                                    "terms": {"label": "Terms of Use",
+                                                                                              "linkButtonLabel": "View Terms of Use",
+                                                                                              "url": "https://en.help.roblox.com/hc/en-us/articles/115004647846-Roblox-Terms-of-Use"}}}}]}}},
+                                               {"title": "Report abuse",
+                                                "subtitle": "Tell us how you think this is breaking the rules of Roblox",
+                                                "actionInfo": {"actionLabel": "Submit", "predefinedNextStepId": 1,
+                                                               "shouldSubmit": True}, "stepId": 0,
+                                                "internalStepName": "generic_legacy_root", "isCompletionStep": False,
+                                                "innerContentConfig": {"type": "configurableComponentList",
+                                                                       "configurableComponentList": {"components": [
+                                                                           {"componentType": "selector",
+                                                                            "isOptional": True,
+                                                                            "requirementMessage": "Optional",
+                                                                            "formDataKey": "place_selector",
+                                                                            "selector": {
+                                                                                "prompt": "Please select any inappropriate media:"}},
+                                                                           {"componentType": "dropdown",
+                                                                            "isOptional": False,
+                                                                            "requirementMessage": "You must select a category",
+                                                                            "formDataKey": "abuse_category",
+                                                                            "dropdown": {"prompt": "Subject:",
+                                                                                         "placeholder": "Please select a category",
+                                                                                         "items": [{
+                                                                                                       "label": "Inappropriate Language - Profanity \u0026 Adult Content",
+                                                                                                       "formDataValue": "ABUSE_CATEGORY_INAPPROPRIATE_LANGUAGE_PROFANITY_AND_ADULT_CONTENT"},
+                                                                                                   {
+                                                                                                       "label": "Asking for or Giving Private Information",
+                                                                                                       "formDataValue": "ABUSE_CATEGORY_PERSONAL_QUESTION"},
+                                                                                                   {
+                                                                                                       "label": "Bullying, Harassment, Hate Speech",
+                                                                                                       "formDataValue": "ABUSE_CATEGORY_BULLYING"},
+                                                                                                   {"label": "Dating",
+                                                                                                    "formDataValue": "ABUSE_CATEGORY_DATING"},
+                                                                                                   {
+                                                                                                       "label": "Exploiting, Cheating, Scamming",
+                                                                                                       "formDataValue": "ABUSE_CATEGORY_EXPLOITING_CHEATING_SCAMMING"},
+                                                                                                   {
+                                                                                                       "label": "Account Theft - Phishing, Hacking, Trading",
+                                                                                                       "formDataValue": "ABUSE_CATEGORY_ACCOUNT_THEFT"},
+                                                                                                   {
+                                                                                                       "label": "Inappropriate Content - Place, Image, Model",
+                                                                                                       "formDataValue": "ABUSE_CATEGORY_INAPT_CONTENT"},
+                                                                                                   {
+                                                                                                       "label": "Real Life Threats \u0026 Suicide Threats",
+                                                                                                       "formDataValue": "ABUSE_CATEGORY_REAL_LIFE_THREATS_AND_SUICIDE_THREATS"},
+                                                                                                   {
+                                                                                                       "label": "Inaccurate Content Maturity (e.g. blood, violence)",
+                                                                                                       "formDataValue": "ABUSE_CATEGORY_INACCURATE_AGE_GUIDELINES"},
+                                                                                                   {
+                                                                                                       "label": "Other rule violation",
+                                                                                                       "formDataValue": "ABUSE_CATEGORY_OTHER"}]}},
+                                                                           {"componentType": "freeComment",
+                                                                            "isOptional": True,
+                                                                            "requirementMessage": "Optional",
+                                                                            "formDataKey": "free_comment",
+                                                                            "freeComment": {"prompt": "Comment:",
+                                                                                            "placeholder": "Describe using your own words"}}]}},
+                                                "footerContentConfig": {"type": "configurableComponentList",
+                                                                        "configurableComponentList": {"components": [
+                                                                            {"componentType": "paragraph",
+                                                                             "isOptional": True,
+                                                                             "requirementMessage": "",
+                                                                             "formDataKey": "", "paragraph": {
+                                                                                "text": "We'll review your report and take appropriate action. We won't share your information with any user you report. Reporting a user or content won't block them automatically.",
+                                                                                "links": None}},
+                                                                            {"componentType": "link",
+                                                                             "isOptional": True,
+                                                                             "requirementMessage": "",
+                                                                             "formDataKey": "", "link": {
+                                                                                "label": "Report illegal content under the EU Digital Services Act.",
+                                                                                "linkButtonLabel": "Report illegal content under the EU Digital Services Act.",
+                                                                                "url": "https://www.roblox.com/illegal-content-reporting"}}]}}}]})
+    return True
+
+
+@server_path('/abuse-reporting/v2/abuse-report')
+@util.auth.authenticated_required_api
+def _(self: web_server_handler) -> bool:
+    self.send_json({"reportId": ""})
     return True

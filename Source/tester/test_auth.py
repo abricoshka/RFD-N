@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import os
+import sqlite3
 import shutil
 import tempfile
 import urllib.error
@@ -562,6 +563,68 @@ class TestAuth(unittest.TestCase):
         self.assertIn("created", handler.json_body)
         self.assertIn("description", handler.json_body)
 
+    def test_v1_users_id_and_username_lookup_return_live_verified_badge(self) -> None:
+        data_storage = self.make_storage()
+        verified_user = util.auth.CreateUser(
+            data_storage,
+            "VerifiedUser",
+            "secret123",
+        )
+        regular_user = util.auth.CreateUser(
+            data_storage,
+            "RegularUser",
+            "secret123",
+        )
+        self.assertIsNotNone(verified_user)
+        self.assertIsNotNone(regular_user)
+        assert verified_user is not None
+        assert regular_user is not None
+
+        data_storage.user.set_is_verified(verified_user.id, True)
+
+        user_handler = fake_handler(data_storage)
+        self.assertTrue(users_api.send_user_details_v1(user_handler, verified_user.id))
+        self.assertEqual(user_handler.status_code, 200)
+        self.assertTrue(user_handler.json_body["hasVerifiedBadge"])
+
+        lookup_handler = fake_handler(
+            data_storage,
+            body=json.dumps({
+                "usernames": [
+                    "verifieduser",
+                    "RegularUser",
+                ],
+                "excludeBannedUsers": False,
+            }).encode("utf-8"),
+        )
+        lookup_handler.command = "POST"
+        lookup_handler.headers["Content-Type"] = "application/json"
+
+        self.assertTrue(
+            self.call_endpoint('/v1/usernames/users', lookup_handler, command="POST"),
+        )
+        self.assertEqual(
+            lookup_handler.json_body,
+            {
+                "data": [
+                    {
+                        "requestedUsername": "verifieduser",
+                        "hasVerifiedBadge": True,
+                        "id": verified_user.id,
+                        "name": "VerifiedUser",
+                        "displayName": "VerifiedUser",
+                    },
+                    {
+                        "requestedUsername": "RegularUser",
+                        "hasVerifiedBadge": False,
+                        "id": regular_user.id,
+                        "name": "RegularUser",
+                        "displayName": "RegularUser",
+                    },
+                ],
+            },
+        )
+
     def test_v1_users_id_returns_404_for_missing_user(self) -> None:
         data_storage = self.make_storage()
         handler = fake_handler(data_storage)
@@ -644,6 +707,71 @@ class TestAuth(unittest.TestCase):
             handler.json_body,
             {"errors": [{"code": 0, "message": "UnsupportedMediaType"}]},
         )
+
+    def test_verified_badge_columns_migrate_existing_user_and_group_tables(self) -> None:
+        temp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, temp_dir, True)
+        sqlite_path = os.path.join(temp_dir, "legacy.sqlite")
+
+        connection = sqlite3.connect(sqlite_path)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE "user" (
+                    "id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    "username" TEXT NOT NULL,
+                    "password" TEXT NOT NULL,
+                    "created" DATETIME NOT NULL,
+                    "description" TEXT NOT NULL DEFAULT 'Hi! I just joined Roblox!',
+                    "lastonline" DATETIME NOT NULL,
+                    "accountstatus" INTEGER NOT NULL DEFAULT 1,
+                    "TOTPEnabled" BOOLEAN NOT NULL DEFAULT FALSE,
+                    UNIQUE ("username") ON CONFLICT ABORT
+                );
+                """,
+            )
+            connection.execute(
+                """
+                CREATE TABLE "groups" (
+                    "id" INTEGER PRIMARY KEY NOT NULL,
+                    "owner_id" INTEGER,
+                    "name" TEXT NOT NULL,
+                    "description" TEXT NOT NULL,
+                    "created_at" DATETIME NOT NULL,
+                    "updated_at" DATETIME NOT NULL,
+                    "locked" BOOLEAN NOT NULL DEFAULT FALSE
+                );
+                """,
+            )
+            connection.execute(
+                """
+                INSERT INTO "user"
+                ("id", "username", "password", "created", "description", "lastonline", "accountstatus", "TOTPEnabled")
+                VALUES
+                (1, 'legacy_user', 'password', '2026-01-01T00:00:00', 'Legacy user', '2026-01-01T00:00:00', 1, 0)
+                """,
+            )
+            connection.execute(
+                """
+                INSERT INTO "groups"
+                ("id", "owner_id", "name", "description", "created_at", "updated_at", "locked")
+                VALUES
+                (5, 1, 'Legacy Group', 'Legacy group', '2026-01-01T00:00:00', '2026-01-01T00:00:00', 0)
+                """,
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        data_storage = storage.storager(sqlite_path, force_init=False)
+        self.assertFalse(data_storage.user.check_object(1).is_verified)
+        self.assertFalse(data_storage.group.check_object(5).is_verified)
+
+        data_storage.user.set_is_verified(1, True)
+        data_storage.group.set_is_verified(5, True)
+
+        self.assertTrue(data_storage.user.check_object(1).is_verified)
+        self.assertTrue(data_storage.group.check_object(5).is_verified)
 
     def test_product_experimentation_player_app_login_returns_null_value(self) -> None:
         handler = fake_handler(
@@ -1171,11 +1299,13 @@ class TestAuth(unittest.TestCase):
         fake_response.__enter__.return_value = fake_response
         fake_response.read.return_value = (
             b'{"joinScriptUrl":"https://localhost:2005/game/PlaceLauncher.ashx?placeId=1818&t=abc",'
-            b'"authenticationUrl":"https://localhost:2005/login/negotiate.ashx"}'
+            b'"authenticationUrl":"https://localhost:2005/login/negotiate.ashx",'
+            b'"authenticationTicket":"auth-ticket"}'
         )
 
         captured: dict[str, tuple[str, ...]] = {}
         launcher.get_versioned_path = lambda *_args: 'RobloxPlayerBeta.exe'
+        launcher.retr_version = lambda: util.versions.VERSION_MAP["v463"]
         launcher.init_popen = lambda _exe, args: captured.setdefault("args", args)
 
         with (
@@ -1207,6 +1337,7 @@ class TestAuth(unittest.TestCase):
 
         captured: dict[str, tuple[str, ...]] = {}
         launcher.get_versioned_path = lambda *_args: 'RobloxPlayerBeta.exe'
+        launcher.retr_version = lambda: util.versions.VERSION_MAP["v463"]
         launcher.init_popen = lambda _exe, args: captured.setdefault("args", args)
 
         with mock.patch(
@@ -1232,6 +1363,7 @@ class TestAuth(unittest.TestCase):
 
         captured: dict[str, tuple[str, ...]] = {}
         launcher.get_versioned_path = lambda *_args: 'RobloxPlayerBeta.exe'
+        launcher.retr_version = lambda: util.versions.VERSION_MAP["v463"]
         launcher.init_popen = lambda _exe, args: captured.setdefault("args", args)
 
         request = urllib.request.Request(
@@ -1261,6 +1393,68 @@ class TestAuth(unittest.TestCase):
         self.assertIn('/game/PlaceLauncher.ashx?', join_argument)
         self.assertIn('ServerPort=2006', join_argument)
         self.assertNotIn('UserCode=', join_argument)
+
+    def test_player_bootstrap_skips_legacy_join_setup_for_v712(self) -> None:
+        launcher = player_routine.obj_type(
+            rcc_host='127.0.0.1',
+            web_host='127.0.0.1',
+            rcc_port=2006,
+            web_port=2005,
+            user_code=None,
+            logger=logger.PRINT_QUIET,
+            launch_delay=0,
+        )
+
+        with (
+            mock.patch('routines.player.logic.bin_entry.bootstrap'),
+            mock.patch.object(
+                launcher,
+                'retr_version',
+                return_value=util.versions.VERSION_MAP["v712"],
+            ),
+            mock.patch.object(launcher, 'finalise_user_code') as finalise_mock,
+            mock.patch.object(launcher, 'make_client_popen') as launch_mock,
+        ):
+            launcher.bootstrap()
+
+        finalise_mock.assert_not_called()
+        launch_mock.assert_called_once()
+
+    def test_player_make_client_popen_skips_authenticated_join_flow_for_v712(self) -> None:
+        launcher = player_routine.obj_type(
+            rcc_host='127.0.0.1',
+            web_host='127.0.0.1',
+            rcc_port=2006,
+            web_port=2005,
+            user_code=None,
+            logger=logger.PRINT_QUIET,
+        )
+
+        captured: dict[str, tuple[str, ...]] = {}
+        launcher.get_versioned_path = lambda *_args: 'RobloxPlayerBeta.exe'
+        launcher.init_popen = lambda _exe, args: captured.setdefault("args", args)
+
+        with (
+            mock.patch.object(
+                launcher,
+                'retr_version',
+                return_value=util.versions.VERSION_MAP["v712"],
+            ),
+            mock.patch.object(launcher, 'get_cookie_join_data') as join_mock,
+            mock.patch.object(launcher, 'get_auth_cookie') as cookie_mock,
+        ):
+            launcher.make_client_popen()
+
+        join_mock.assert_not_called()
+        cookie_mock.assert_not_called()
+        self.assertEqual(
+            captured["args"],
+            (
+                "-play",
+                "-a",
+                f"roblox://experiences/start?placeId={util.const.PLACE_IDEN_CONST}",
+            ),
+        )
 
     def test_get_account_age_days_accepts_aware_created_timestamp(self) -> None:
         handler = fake_handler(

@@ -276,6 +276,106 @@ def _resolve_open_place_context(self: web_server_handler):
     return (universe_id, universe_obj, place_obj)
 
 
+def _parse_bounded_int(
+    raw_value: str | None,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    if raw_value is None:
+        return default
+    try:
+        parsed_value = int(raw_value)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, parsed_value))
+
+
+@server_path(r"/v2/universes/(\d+)/places", regex=True)
+def get_universe_places(
+    self: web_server_handler,
+    match: re.Match[str],
+) -> bool:
+    universe_id = int(match.group(1))
+    universe_obj = self.server.storage.universe.check(universe_id)
+    if universe_obj is None:
+        self.send_json({
+            "previousPageCursor": None,
+            "nextPageCursor": None,
+            "data": [],
+        })
+        return True
+
+    limit = _parse_bounded_int(
+        self.query.get("limit"),
+        default=50,
+        minimum=1,
+        maximum=100,
+    )
+    offset = _parse_bounded_int(
+        self.query.get("cursor"),
+        default=0,
+        minimum=0,
+        maximum=10_000_000,
+    )
+    sort_order = self.query.get("SortOrder") or self.query.get("sortOrder") or "Asc"
+    root_place_id = universe_obj[0]
+    places_page = self.server.storage.place.list_objects_for_universe(
+        universe_id,
+        root_place_id=root_place_id,
+        limit=limit,
+        offset=offset,
+        sort_order=sort_order,
+    )
+
+    response_data: list[dict[str, object]] = []
+    for place_obj in places_page.items:
+        asset_obj = (
+            place_obj.assetObj or
+            self.server.storage.asset.resolve_object(place_obj.placeid)
+        )
+        created_at = universe_obj[3]
+        updated_at = universe_obj[4]
+        name = ""
+        description = ""
+        if asset_obj is not None:
+            created_at = asset_obj.created_at
+            updated_at = asset_obj.updated_at
+            name = asset_obj.name
+            description = asset_obj.description
+
+        response_data.append({
+            "maxPlayerCount": None,
+            "socialSlotType": None,
+            "customSocialSlotsCount": None,
+            "allowCopying": None,
+            "currentSavedVersion": None,
+            "isAllGenresAllowed": None,
+            "allowedGearTypes": None,
+            "maxPlayersAllowed": place_obj.maxplayers,
+            "created": _format_studio_datetime(created_at),
+            "updated": _format_studio_datetime(updated_at),
+            "id": place_obj.placeid,
+            "universeId": universe_id,
+            "name": name,
+            "description": description,
+            "isRootPlace": place_obj.placeid == root_place_id,
+        })
+
+    previous_cursor = None if offset <= 0 else str(max(0, offset - limit))
+    next_cursor = None
+    if places_page.has_next:
+        next_cursor = str(offset + len(places_page.items))
+
+    self.send_json({
+        "previousPageCursor": previous_cursor,
+        "nextPageCursor": next_cursor,
+        "data": response_data,
+    })
+    return True
+
+
 @server_path("/studio-open-place/v1/openplace")
 def _(self: web_server_handler) -> bool:
     resolved = _resolve_open_place_context(self)
@@ -368,6 +468,16 @@ def _(self: web_server_handler) -> bool:
     return True
 
 
+@server_path("/studio-user-settings/plugin-permissions/v2/plugins")
+def _(self: web_server_handler) -> bool:
+    self.send_json({
+        "data": [],
+        "nextPageCursor": None,
+        "previousPageCursor": None,
+    }, 200)
+    return True
+
+
 # TODO: Proper API handling
 @server_path(r'/studio-user-settings/v1/user/studiodata/CloudEditKey_placeId(\d+)', regex=True)
 def _(self: web_server_handler, match: re.Match[str]) -> bool:
@@ -384,4 +494,9 @@ def _(self: web_server_handler, match: re.Match[str]) -> bool:
 @server_path("/asset-permissions-api/v1/assets/check-permissions")
 def _(self: web_server_handler) -> bool:
     self.send_json({"results": [{"value": {"status": "NoPermission"}}]}, 200)
+    return True
+
+@server_path('/guac-v2/v1/bundles/studio')
+def _(self: web_server_handler) -> bool:
+    self.send_json({})
     return True

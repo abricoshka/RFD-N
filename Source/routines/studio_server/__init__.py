@@ -7,6 +7,7 @@ import threading
 import time
 import json
 import os
+import uuid
 
 # Local application imports
 from config_type.types import wrappers
@@ -34,6 +35,16 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
     rcc_port: int
 
     place_iden: int = const.PLACE_IDEN_CONST
+    parent_pid: int = dataclasses.field(init=False, default=0)
+    parent_session_guid: str = dataclasses.field(init=False, default='')
+    play_test_session_guid: str = dataclasses.field(init=False, default='')
+
+    @dataclasses.dataclass(frozen=True)
+    class launch_context:
+        place_id: int
+        universe_id: int
+        creator_id: int
+        creator_type: int
 
     @override
     def __post_init__(self) -> None:
@@ -63,25 +74,61 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
     @functools.cache
     def setup_place_local(self) -> str:
         '''
-        Returns the local filesystem path to the place file.
-        If the URI is local, returns its path directly so Server.exe can read it.
-        If remote, fetches and writes to a temp file first.
+        Stages the place file to a stable local path without spaces.
+        Newer Studio StartServer launches are fragile here and can fail to open
+        direct local paths from arbitrary user directories.
         '''
         rbx_uri = self.game_config.server_core.place_file.rbxl_uri
+        new_dir = util.resource.retr_full_path(
+            util.resource.dir_type.MISC,
+            'StudioServerCache',
+        )
+        os.makedirs(new_dir, exist_ok=True)
+        new_path = os.path.join(
+            new_dir,
+            f'place_{self.place_iden}_{self.rcc_port}.rbxl',
+        )
+
         if rbx_uri.uri_type == wrappers.uri_type.LOCAL:
             assert isinstance(rbx_uri.value, wrappers.path_str)
-            return str(rbx_uri.value)
+            with open(str(rbx_uri.value), 'rb') as f:
+                rbxl_data = f.read()
+        else:
+            rbxl_data = rbx_uri.extract()
 
-        new_path = util.resource.retr_full_path(
-            util.resource.dir_type.MISC,
-            '_.rbxl',
-        )
-        rbxl_data = rbx_uri.extract()
         if rbxl_data is None:
             raise Exception('RBXL was not found.')
+
         with open(new_path, 'wb') as f:
             f.write(rbxl_data)
-        return new_path
+        return os.path.normpath(new_path)
+
+    def get_team_test_place_path(self) -> str:
+        local_appdata = os.getenv('LOCALAPPDATA')
+        if local_appdata is None:
+            local_appdata = util.resource.retr_full_path(
+                util.resource.dir_type.MISC,
+            )
+        roblox_dir = os.path.join(local_appdata, 'Roblox')
+        os.makedirs(roblox_dir, exist_ok=True)
+        return os.path.join(roblox_dir, 'server.rbxl')
+
+    def save_team_test_place_file(self) -> str:
+        place_uri = self.game_config.server_core.place_file.rbxl_uri
+        if place_uri.uri_type == wrappers.uri_type.LOCAL:
+            assert isinstance(place_uri.value, wrappers.path_str)
+            with open(str(place_uri.value), 'rb') as f:
+                raw_data = f.read()
+        else:
+            raw_data = place_uri.extract()
+
+        if raw_data is None:
+            raise Exception('RBXL was not found.')
+
+        team_test_path = self.get_team_test_place_path()
+        with open(team_test_path, 'wb') as f:
+            f.write(raw_data)
+        return os.path.normpath(team_test_path)
 
     def save_place_file(self) -> None:
         '''
@@ -114,17 +161,58 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
                 context=logger.log_context.PYTHON_SETUP,
             )
 
+    def resolve_launch_context(self) -> "obj_type.launch_context":
+        place_id = int(self.place_iden)
+        universe_id = 0
+        creator_id = 0
+        creator_type = 0
+
+        storage = self.game_config.storage
+        universe_row = None
+        resolved_universe_id = storage.universe.get_id_from_root_place_id(place_id)
+        if resolved_universe_id is not None:
+            universe_id = int(resolved_universe_id)
+            universe_row = storage.universe.check(universe_id)
+
+        if universe_row is None:
+            place_obj = storage.place.check_object(place_id)
+            if place_obj is not None and place_obj.parent_universe_id is not None:
+                universe_id = int(place_obj.parent_universe_id)
+                universe_row = storage.universe.check(universe_id)
+
+        if universe_row is not None:
+            creator_id = int(universe_row[1])
+            creator_type = int(universe_row[2])
+
+        if creator_id <= 0:
+            asset_obj = storage.asset.resolve_object(place_id)
+            if asset_obj is not None:
+                creator_id = int(asset_obj.creator_id)
+                creator_type = int(asset_obj.creator_type)
+
+        return self.launch_context(
+            place_id=place_id,
+            universe_id=universe_id,
+            creator_id=creator_id,
+            creator_type=creator_type,
+        )
+
     def gen_cmd_args(self) -> tuple[str, ...]:
+        launch_context = self.resolve_launch_context()
         return (
+            '-placeVersion', '0',
+            '-creatorId', str(launch_context.creator_id),
             '-task', 'StartServer',
-            '-localPlaceFile', self.setup_place_local(),
+            '-universeId', str(launch_context.universe_id),
+            '-placeId', str(launch_context.place_id),
             '-port', str(self.rcc_port),
-            '-placeId', str(self.place_iden),
-            '-universeId', '1',
-            '-creatorId', '1',
-            '-creatorType', '0',
-            '-placeVersion', '1',
+            '-creatorType', str(launch_context.creator_type),
             '-numTestServerPlayersUponStartup', '0',
+            '-userid', '1',
+            '-parentPid', str(self.parent_pid),
+            '-parentSessionGuid', self.parent_session_guid,
+            '-instanceId', 'StudioServer',
+            '-playTestSessionGuid', self.play_test_session_guid
         )
 
     def read_server_output(self) -> None: # doesnt work
@@ -193,6 +281,7 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
             cmd_args=self.gen_cmd_args(),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            # env={**os.environ, 'LOCAL_RCC_BYTECODE_ENCODER': 'legacy', 'LOCAL_RCC_BYTECODE_CONTAINER': "prehash-zero-trailer", 'LOCAL_RCC_DUMP_BYTECODE': 'true', 'LOCAL_RCC_TRACE_ALL_COMPILES': 'true', 'LOCAL_RCC_PROTECTED_STRING_FORMAT': '0x4'}
         )
 
         # Inject local_rcc.dll into the now-running Server.exe process,
@@ -234,7 +323,7 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
             return
 
     def patch_cacert_pem(self) -> None:
-        '''Appends the RFD CA to ssl/cacert.pem so Server.exe trusts the local HTTPS web server.'''
+        '''Appends the RFD CA to ssl/cacert.pem so RobloxStudioBeta.exe trusts the local HTTPS web server.'''
         ca_pem = util.ssl_context.get_ca_pem_bytes()
         cacert_path = self.get_versioned_path('ssl', 'cacert.pem')
         if not os.path.isfile(cacert_path):
@@ -258,15 +347,42 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
         if util.ssl_context.use_rblxhub_certs():
             util.ssl_context._ensure_rbolock_hosts(self.logger)
 
+        type(self).setup_place_local.cache_clear()
+        self.parent_pid = os.getpid()
+        self.parent_session_guid = str(uuid.uuid4()).upper()
+        self.play_test_session_guid = str(uuid.uuid4()).upper()
         self.patch_cacert_pem()
         self.save_place_file()
         self.save_thumbnail()
+        staged_place_path = self.setup_place_local()
+        team_test_place_path = self.save_team_test_place_file()
 
         self.logger.log(
             (
                 f"{self.logger.bcolors.BOLD}[UDP %d]{self.logger.bcolors.ENDC}: "
                 "initialising Rōblox Studio Server"
             ) % (self.rcc_port,),
+            context=logger.log_context.PYTHON_SETUP,
+        )
+
+        self.logger.log(
+            f"Using staged Studio server place file: {staged_place_path}",
+            context=logger.log_context.PYTHON_SETUP,
+        )
+        self.logger.log(
+            f"Using Studio team test place file: {team_test_place_path}",
+            context=logger.log_context.PYTHON_SETUP,
+        )
+        launch_context = self.resolve_launch_context()
+        self.logger.log(
+            (
+                "Resolved Studio server launch context: "
+                f"placeId={launch_context.place_id}, "
+                f"universeId={launch_context.universe_id}, "
+                f"creatorId={launch_context.creator_id}, "
+                f"creatorType={launch_context.creator_type}, "
+                f"port={self.rcc_port}"
+            ),
             context=logger.log_context.PYTHON_SETUP,
         )
 

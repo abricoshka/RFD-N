@@ -144,3 +144,29 @@ class database(_logic.sqlite_connector_base):
             updated=str(row[4]),
             is_for_sale=bool(row[5]),
         )
+
+    def list_asset_ids_for_user(
+        self,
+        user_id: int,
+        *,
+        limit: int = 30,
+        is_for_sale: bool | None = None,
+    ) -> list[int]:
+        filters = [f"{self.field.USER_ID.value} = ?"]
+        values: list[int | bool] = [user_id]
+        if is_for_sale is not None:
+            filters.append(f"{self.field.IS_FOR_SALE.value} = ?")
+            values.append(is_for_sale)
+
+        results = self.sqlite.execute_and_fetch(
+            query=f"""
+            SELECT {self.field.ASSET_ID.value}
+            FROM "{self.TABLE_NAME}"
+            WHERE {" AND ".join(filters)}
+            ORDER BY {self.field.UPDATED.value} DESC, {self.field.ID.value} DESC
+            LIMIT ?
+            """,
+            values=(*values, limit),
+        )
+        assert results is not None
+        return [int(row[0]) for row in results]

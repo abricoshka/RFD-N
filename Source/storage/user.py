@@ -16,6 +16,9 @@ class user_item:
     lastonline: str
     accountstatus: int
     TOTPEnabled: bool
+    is_verified: bool
+    is_premium: bool
+    is_roblox_admin: bool
 
 
 class database(_logic.sqlite_connector_base):
@@ -30,6 +33,9 @@ class database(_logic.sqlite_connector_base):
         LASTONLINE = '"lastonline"'
         ACCOUNTSTATUS = '"accountstatus"'
         TOTP_ENABLED = '"TOTPEnabled"'
+        IS_VERIFIED = '"is_verified"'
+        IS_PREMIUM = '"is_premium"'
+        IS_ROBLOX_ADMIN = '"is_roblox_admin"'
 
     @override
     def first_time_setup(self) -> None:
@@ -44,8 +50,30 @@ class database(_logic.sqlite_connector_base):
                 {self.field.LASTONLINE.value} DATETIME NOT NULL,
                 {self.field.ACCOUNTSTATUS.value} INTEGER NOT NULL DEFAULT 1,
                 {self.field.TOTP_ENABLED.value} BOOLEAN NOT NULL DEFAULT FALSE,
+                {self.field.IS_VERIFIED.value} BOOLEAN NOT NULL DEFAULT FALSE,
+                {self.field.IS_PREMIUM.value} BOOLEAN NOT NULL DEFAULT FALSE,
+                {self.field.IS_ROBLOX_ADMIN.value} BOOLEAN NOT NULL DEFAULT FALSE,
                 UNIQUE ({self.field.USERNAME.value}) ON CONFLICT ABORT
             );
+            """,
+        )
+        self._ensure_boolean_column(self.field.IS_VERIFIED)
+        self._ensure_boolean_column(self.field.IS_PREMIUM)
+        self._ensure_boolean_column(self.field.IS_ROBLOX_ADMIN)
+
+    def _ensure_boolean_column(self, field: "database.field") -> None:
+        column_name = field.value.strip('"')
+        result = self.sqlite.execute_and_fetch(
+            query=f'PRAGMA table_info("{self.TABLE_NAME}")',
+        )
+        assert result is not None
+        if any(str(row[1]) == column_name for row in result):
+            return
+
+        self.sqlite.execute(
+            f"""
+            ALTER TABLE "{self.TABLE_NAME}"
+            ADD COLUMN {field.value} BOOLEAN NOT NULL DEFAULT FALSE
             """,
         )
 
@@ -66,6 +94,9 @@ class database(_logic.sqlite_connector_base):
         description: str = "Hi! I just joined Roblox!",
         accountstatus: int = 1,
         TOTPEnabled: bool = False,
+        is_verified: bool = False,
+        is_premium: bool = False,
+        is_roblox_admin: bool = False,
         force_user_id: int | None = None,
     ) -> int:
         created = self._normalise_timestamp(created)
@@ -82,9 +113,12 @@ class database(_logic.sqlite_connector_base):
                     {self.field.DESCRIPTION.value},
                     {self.field.LASTONLINE.value},
                     {self.field.ACCOUNTSTATUS.value},
-                    {self.field.TOTP_ENABLED.value}
+                    {self.field.TOTP_ENABLED.value},
+                    {self.field.IS_VERIFIED.value},
+                    {self.field.IS_PREMIUM.value},
+                    {self.field.IS_ROBLOX_ADMIN.value}
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     username,
@@ -94,6 +128,9 @@ class database(_logic.sqlite_connector_base):
                     lastonline,
                     accountstatus,
                     TOTPEnabled,
+                    is_verified,
+                    is_premium,
+                    is_roblox_admin,
                 ),
             )
             result = self.sqlite.execute_and_fetch("SELECT last_insert_rowid()")
@@ -112,9 +149,12 @@ class database(_logic.sqlite_connector_base):
                 {self.field.DESCRIPTION.value},
                 {self.field.LASTONLINE.value},
                 {self.field.ACCOUNTSTATUS.value},
-                {self.field.TOTP_ENABLED.value}
+                {self.field.TOTP_ENABLED.value},
+                {self.field.IS_VERIFIED.value},
+                {self.field.IS_PREMIUM.value},
+                {self.field.IS_ROBLOX_ADMIN.value}
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT({self.field.ID.value})
             DO UPDATE SET
                 {self.field.USERNAME.value} = excluded.{self.field.USERNAME.value},
@@ -123,7 +163,10 @@ class database(_logic.sqlite_connector_base):
                 {self.field.DESCRIPTION.value} = excluded.{self.field.DESCRIPTION.value},
                 {self.field.LASTONLINE.value} = excluded.{self.field.LASTONLINE.value},
                 {self.field.ACCOUNTSTATUS.value} = excluded.{self.field.ACCOUNTSTATUS.value},
-                {self.field.TOTP_ENABLED.value} = excluded.{self.field.TOTP_ENABLED.value}
+                {self.field.TOTP_ENABLED.value} = excluded.{self.field.TOTP_ENABLED.value},
+                {self.field.IS_VERIFIED.value} = excluded.{self.field.IS_VERIFIED.value},
+                {self.field.IS_PREMIUM.value} = excluded.{self.field.IS_PREMIUM.value},
+                {self.field.IS_ROBLOX_ADMIN.value} = excluded.{self.field.IS_ROBLOX_ADMIN.value}
             """,
             (
                 force_user_id,
@@ -134,6 +177,9 @@ class database(_logic.sqlite_connector_base):
                 lastonline,
                 accountstatus,
                 TOTPEnabled,
+                is_verified,
+                is_premium,
+                is_roblox_admin,
             ),
         )
         return force_user_id
@@ -151,6 +197,9 @@ class database(_logic.sqlite_connector_base):
             lastonline=str(row[4]),
             accountstatus=int(row[5]),
             TOTPEnabled=bool(row[6]),
+            is_verified=bool(row[7]),
+            is_premium=bool(row[8]),
+            is_roblox_admin=bool(row[9]),
         )
 
     def check(
@@ -164,6 +213,9 @@ class database(_logic.sqlite_connector_base):
         str,
         int,
         bool,
+        bool,
+        bool,
+        bool,
     ] | None:
         result = self.sqlite.execute_and_fetch(
             query=f"""
@@ -174,7 +226,10 @@ class database(_logic.sqlite_connector_base):
             {self.field.DESCRIPTION.value},
             {self.field.LASTONLINE.value},
             {self.field.ACCOUNTSTATUS.value},
-            {self.field.TOTP_ENABLED.value}
+            {self.field.TOTP_ENABLED.value},
+            {self.field.IS_VERIFIED.value},
+            {self.field.IS_PREMIUM.value},
+            {self.field.IS_ROBLOX_ADMIN.value}
 
             FROM "{self.TABLE_NAME}"
             WHERE {self.field.ID.value} = ?
@@ -193,6 +248,9 @@ class database(_logic.sqlite_connector_base):
             str(row[4]),
             int(row[5]),
             bool(row[6]),
+            bool(row[7]),
+            bool(row[8]),
+            bool(row[9]),
         )
 
     def check_from_username(
@@ -206,6 +264,9 @@ class database(_logic.sqlite_connector_base):
         str,
         int,
         bool,
+        bool,
+        bool,
+        bool,
     ] | None:
         result = self.sqlite.execute_and_fetch(
             query=f"""
@@ -216,7 +277,10 @@ class database(_logic.sqlite_connector_base):
             {self.field.DESCRIPTION.value},
             {self.field.LASTONLINE.value},
             {self.field.ACCOUNTSTATUS.value},
-            {self.field.TOTP_ENABLED.value}
+            {self.field.TOTP_ENABLED.value},
+            {self.field.IS_VERIFIED.value},
+            {self.field.IS_PREMIUM.value},
+            {self.field.IS_ROBLOX_ADMIN.value}
 
             FROM "{self.TABLE_NAME}"
             WHERE {self.field.USERNAME.value} = ?
@@ -235,6 +299,9 @@ class database(_logic.sqlite_connector_base):
             str(row[4]),
             int(row[5]),
             bool(row[6]),
+            bool(row[7]),
+            bool(row[8]),
+            bool(row[9]),
         )
 
     def get_id_from_username(self, username: str) -> int | None:
@@ -266,6 +333,9 @@ class database(_logic.sqlite_connector_base):
             lastonline=str(row[4]),
             accountstatus=int(row[5]),
             TOTPEnabled=bool(row[6]),
+            is_verified=bool(row[7]),
+            is_premium=bool(row[8]),
+            is_roblox_admin=bool(row[9]),
         )
 
     def check_object_from_username_casefold(self, username: str) -> user_item | None:
@@ -279,7 +349,10 @@ class database(_logic.sqlite_connector_base):
             {self.field.DESCRIPTION.value},
             {self.field.LASTONLINE.value},
             {self.field.ACCOUNTSTATUS.value},
-            {self.field.TOTP_ENABLED.value}
+            {self.field.TOTP_ENABLED.value},
+            {self.field.IS_VERIFIED.value},
+            {self.field.IS_PREMIUM.value},
+            {self.field.IS_ROBLOX_ADMIN.value}
 
             FROM "{self.TABLE_NAME}"
             WHERE lower({self.field.USERNAME.value}) = lower(?)
@@ -300,6 +373,9 @@ class database(_logic.sqlite_connector_base):
             lastonline=str(row[5]),
             accountstatus=int(row[6]),
             TOTPEnabled=bool(row[7]),
+            is_verified=bool(row[8]),
+            is_premium=bool(row[9]),
+            is_roblox_admin=bool(row[10]),
         )
 
     def update_lastonline(
@@ -332,6 +408,57 @@ class database(_logic.sqlite_connector_base):
             """,
             (
                 password,
+                user_id,
+            ),
+        )
+
+    def set_is_verified(
+        self,
+        user_id: int,
+        is_verified: bool,
+    ) -> None:
+        self.sqlite.execute(
+            f"""
+            UPDATE "{self.TABLE_NAME}"
+            SET {self.field.IS_VERIFIED.value} = ?
+            WHERE {self.field.ID.value} = ?
+            """,
+            (
+                is_verified,
+                user_id,
+            ),
+        )
+
+    def set_is_premium(
+        self,
+        user_id: int,
+        is_premium: bool,
+    ) -> None:
+        self.sqlite.execute(
+            f"""
+            UPDATE "{self.TABLE_NAME}"
+            SET {self.field.IS_PREMIUM.value} = ?
+            WHERE {self.field.ID.value} = ?
+            """,
+            (
+                is_premium,
+                user_id,
+            ),
+        )
+
+    def set_is_roblox_admin(
+        self,
+        user_id: int,
+        is_roblox_admin: bool,
+    ) -> None:
+        self.sqlite.execute(
+            f"""
+            UPDATE "{self.TABLE_NAME}"
+            SET {self.field.IS_ROBLOX_ADMIN.value} = ?
+            WHERE {self.field.ID.value} = ?
+            """,
+            (
+                is_roblox_admin,
                 user_id,
             ),
         )

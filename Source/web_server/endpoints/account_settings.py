@@ -35,3 +35,14 @@ def get_email_status(self: web_server_handler) -> bool:
         "canBypassPasswordForEmailUpdate": True,
     })
     return True
+
+
+@server_path(r"/v1/themes/([^/]+)/(\d+)", regex=True, commands={"GET"})
+def get_theme(self: web_server_handler, match) -> bool:
+    del match
+    # always returns a valid theme object here for authenticated web shells.
+    return_value = {
+        "themeType": "Dark",
+    }
+    self.send_json(return_value)
+    return True

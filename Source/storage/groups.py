@@ -15,6 +15,7 @@ class group_item:
     created_at: str
     updated_at: str
     locked: bool
+    is_verified: bool
 
 
 class database(_logic.sqlite_connector_base):
@@ -28,6 +29,7 @@ class database(_logic.sqlite_connector_base):
         CREATED_AT = '"created_at"'
         UPDATED_AT = '"updated_at"'
         LOCKED = '"locked"'
+        IS_VERIFIED = '"is_verified"'
 
     @override
     def first_time_setup(self) -> None:
@@ -40,7 +42,8 @@ class database(_logic.sqlite_connector_base):
                 {self.field.DESCRIPTION.value} TEXT NOT NULL,
                 {self.field.CREATED_AT.value} DATETIME NOT NULL,
                 {self.field.UPDATED_AT.value} DATETIME NOT NULL,
-                {self.field.LOCKED.value} BOOLEAN NOT NULL DEFAULT FALSE
+                {self.field.LOCKED.value} BOOLEAN NOT NULL DEFAULT FALSE,
+                {self.field.IS_VERIFIED.value} BOOLEAN NOT NULL DEFAULT FALSE
             );
             """,
         )
@@ -48,6 +51,23 @@ class database(_logic.sqlite_connector_base):
             f"""
             CREATE INDEX IF NOT EXISTS "idx_{self.TABLE_NAME}_owner_id"
             ON "{self.TABLE_NAME}" ({self.field.OWNER_ID.value});
+            """,
+        )
+        self._ensure_boolean_column(self.field.IS_VERIFIED)
+
+    def _ensure_boolean_column(self, field: "database.field") -> None:
+        column_name = field.value.strip('"')
+        result = self.sqlite.execute_and_fetch(
+            query=f'PRAGMA table_info("{self.TABLE_NAME}")',
+        )
+        assert result is not None
+        if any(str(row[1]) == column_name for row in result):
+            return
+
+        self.sqlite.execute(
+            f"""
+            ALTER TABLE "{self.TABLE_NAME}"
+            ADD COLUMN {field.value} BOOLEAN NOT NULL DEFAULT FALSE
             """,
         )
 
@@ -69,6 +89,7 @@ class database(_logic.sqlite_connector_base):
         created_at: datetime | str | None = None,
         updated_at: datetime | str | None = None,
         locked: bool = False,
+        is_verified: bool = False,
     ) -> None:
         self.sqlite.execute(
             f"""
@@ -80,16 +101,18 @@ class database(_logic.sqlite_connector_base):
                 {self.field.DESCRIPTION.value},
                 {self.field.CREATED_AT.value},
                 {self.field.UPDATED_AT.value},
-                {self.field.LOCKED.value}
+                {self.field.LOCKED.value},
+                {self.field.IS_VERIFIED.value}
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT({self.field.ID.value})
             DO UPDATE SET
                 {self.field.OWNER_ID.value} = excluded.{self.field.OWNER_ID.value},
                 {self.field.NAME.value} = excluded.{self.field.NAME.value},
                 {self.field.DESCRIPTION.value} = excluded.{self.field.DESCRIPTION.value},
                 {self.field.UPDATED_AT.value} = excluded.{self.field.UPDATED_AT.value},
-                {self.field.LOCKED.value} = excluded.{self.field.LOCKED.value}
+                {self.field.LOCKED.value} = excluded.{self.field.LOCKED.value},
+                {self.field.IS_VERIFIED.value} = excluded.{self.field.IS_VERIFIED.value}
             """,
             (
                 group_id,
@@ -99,6 +122,7 @@ class database(_logic.sqlite_connector_base):
                 self._normalise_timestamp(created_at),
                 self._normalise_timestamp(updated_at),
                 locked,
+                is_verified,
             ),
         )
 
@@ -114,7 +138,8 @@ class database(_logic.sqlite_connector_base):
             {self.field.DESCRIPTION.value},
             {self.field.CREATED_AT.value},
             {self.field.UPDATED_AT.value},
-            {self.field.LOCKED.value}
+            {self.field.LOCKED.value},
+            {self.field.IS_VERIFIED.value}
             FROM "{self.TABLE_NAME}"
             WHERE {self.field.ID.value} = ?
             """,
@@ -132,4 +157,22 @@ class database(_logic.sqlite_connector_base):
             created_at=str(row[3]),
             updated_at=str(row[4]),
             locked=bool(row[5]),
+            is_verified=bool(row[6]),
+        )
+
+    def set_is_verified(
+        self,
+        group_id: int,
+        is_verified: bool,
+    ) -> None:
+        self.sqlite.execute(
+            f"""
+            UPDATE "{self.TABLE_NAME}"
+            SET {self.field.IS_VERIFIED.value} = ?
+            WHERE {self.field.ID.value} = ?
+            """,
+            (
+                is_verified,
+                group_id,
+            ),
         )

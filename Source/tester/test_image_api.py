@@ -307,6 +307,48 @@ class TestImageApi(unittest.TestCase):
             batch_handler.json_body["data"][0]["imageUrl"],
         )
 
+    def test_batch_image_request_uses_placeholders_for_empty_headshot_and_game_thumbnail(self) -> None:
+        data_storage, game_config = self.make_storage_and_config()
+        batch_payload = json.dumps([
+            {
+                "requestId": "empty-headshot",
+                "targetId": "",
+                "type": "AvatarHeadShot",
+                "size": "48x48",
+                "isCircular": True,
+            },
+            {
+                "requestId": "game-thumb",
+                "targetId": util.const.PLACE_IDEN_CONST,
+                "type": "GameThumbnail",
+                "size": "384x216",
+                "isCircular": False,
+            },
+        ]).encode("utf-8")
+        batch_handler = fake_handler(
+            data_storage,
+            game_config,
+            body=gzip.compress(batch_payload),
+            headers={"Content-Encoding": "gzip", "Content-Type": "application/json"},
+            command="POST",
+        )
+
+        self.assertTrue(
+            self.call_endpoint("/v1/batch", batch_handler, command="POST"),
+        )
+
+        self.assertEqual(batch_handler.status_code, 200)
+        assert batch_handler.json_body is not None
+        self.assertEqual(len(batch_handler.json_body["data"]), 2)
+        self.assertEqual(
+            batch_handler.json_body["data"][0]["imageUrl"],
+            "https://localhost:2005/static/img/placeholder/headshot_placeholder.png",
+        )
+        self.assertIn(
+            "/asset-thumbnail/image?assetId=1818&width=396&height=200",
+            batch_handler.json_body["data"][1]["imageUrl"],
+        )
+
     def test_avatar_thumbnail_json_route_uses_image_endpoint(self) -> None:
         data_storage, game_config = self.make_storage_and_config()
         user_id = data_storage.user.update("Painter", "password123")

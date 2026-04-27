@@ -197,3 +197,31 @@ class database(_logic.sqlite_connector_base):
             )
             for row in results
         ]
+
+    def get_latest_for_user_ids(
+        self,
+        user_ids: list[int],
+        *,
+        include_guests: bool = False,
+    ) -> dict[int, ingame_player_item]:
+        if not user_ids:
+            return {}
+
+        rows = self.list_for_user_ids(
+            user_ids,
+            include_guests=include_guests,
+        )
+        rows.sort(
+            key=lambda row: (
+                row.last_heartbeat,
+                row.join_time,
+                row.id,
+            ),
+        )
+
+        latest_rows: dict[int, ingame_player_item] = {}
+        for row in reversed(rows):
+            if row.user_id in latest_rows:
+                continue
+            latest_rows[row.user_id] = row
+        return latest_rows

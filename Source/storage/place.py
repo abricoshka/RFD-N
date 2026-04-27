@@ -27,6 +27,12 @@ class place_item:
     assetObj: 'asset_item | None' = None
 
 
+@dataclasses.dataclass
+class place_page:
+    items: list[place_item]
+    has_next: bool
+
+
 class database(_logic.sqlite_connector_base):
     TABLE_NAME = "place"
     asset_db = None
@@ -228,4 +234,48 @@ class database(_logic.sqlite_connector_base):
                 {self.field.VISIT_COUNT.value} = {self.field.VISIT_COUNT.value} + excluded.{self.field.VISIT_COUNT.value}
             """,
             (placeid, delta),
+        )
+
+    def list_objects_for_universe(
+        self,
+        universe_id: int,
+        *,
+        root_place_id: int | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        sort_order: str = "Asc",
+    ) -> place_page:
+        if limit <= 0:
+            return place_page(items=[], has_next=False)
+
+        order_direction = (
+            "DESC"
+            if sort_order.casefold() == "desc"
+            else "ASC"
+        )
+        root_filter_place_id = -1 if root_place_id is None else root_place_id
+        results = self.sqlite.execute_and_fetch(
+            query=f"""
+            SELECT {self.field.PLACE_ID.value}
+            FROM "{self.TABLE_NAME}"
+            WHERE (
+                {self.field.PARENT_UNIVERSE_ID.value} = ?
+                OR {self.field.PLACE_ID.value} = ?
+            )
+            ORDER BY {self.field.PLACE_ID.value} {order_direction}
+            LIMIT ? OFFSET ?
+            """,
+            values=(universe_id, root_filter_place_id, limit + 1, offset),
+        )
+        assert results is not None
+
+        place_ids = [int(row[0]) for row in results[:limit]]
+        items = [
+            place_obj
+            for place_id in place_ids
+            if (place_obj := self.check_object(place_id)) is not None
+        ]
+        return place_page(
+            items=items,
+            has_next=len(results) > limit,
         )

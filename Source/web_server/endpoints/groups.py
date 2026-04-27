@@ -4,6 +4,7 @@ import re
 # Local application imports
 from game_config import obj_type
 import util.versions as versions
+import util.verified_badge
 from web_server._logic import web_server_handler, server_path
 
 
@@ -50,9 +51,20 @@ def _(self: web_server_handler, match: re.Match[str]) -> bool:
             {
                 "group": {
                     "id": int(group_id),
-                    "name": "string",
+                    "name": (
+                        group_obj.name
+                        if (
+                            group_obj := self.server.storage.group.check_object(
+                                int(group_id),
+                            )
+                        ) is not None else
+                        "string"
+                    ),
                     "memberCount": 0,
-                    "hasVerifiedBadge": True,
+                    "hasVerifiedBadge": util.verified_badge.group_has_verified_badge(
+                        self.server.storage,
+                        int(group_id),
+                    ),
                 },
                 "role": {
                     "id": int(group_id),

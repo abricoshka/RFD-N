@@ -32,7 +32,6 @@ class obj_type(logic.bin_entry):
 
     user_code: str | None
     launch_delay: float = 0
-
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -80,6 +79,9 @@ class obj_type(logic.bin_entry):
             return
         res = self.send_request('/rfd/default-user-code')
         self.user_code = str(res.read(), encoding='utf-8')
+
+    def uses_legacy_authenticated_join_flow(self) -> bool:
+        return self.retr_version() != util.versions.rōblox.v712
 
     def get_auth_cookie(self) -> str | None:
         return util.player_cookie_store.get_cookie_value(
@@ -131,10 +133,13 @@ class obj_type(logic.bin_entry):
 
                 join_script_url = payload.get('joinScriptUrl')
                 authentication_url = payload.get('authenticationUrl')
+                authentication_ticket = payload.get('authenticationTicket')
                 if not isinstance(join_script_url, str):
                     raise ValueError('joinScriptUrl is missing')
                 if not isinstance(authentication_url, str):
                     raise ValueError('authenticationUrl is missing')
+                if not isinstance(authentication_ticket, str):
+                    raise ValueError('authenticationTicket is missing')
                 return payload
             except urllib.error.HTTPError as exc:
                 last_error = exc
@@ -176,7 +181,8 @@ class obj_type(logic.bin_entry):
     def bootstrap(self) -> None:
         super().bootstrap()
         time.sleep(self.launch_delay)
-        self.finalise_user_code()
+        if self.uses_legacy_authenticated_join_flow():
+            self.finalise_user_code()
         self.make_client_popen()
 
     def build_place_launcher_url(
@@ -211,34 +217,48 @@ class obj_type(logic.bin_entry):
 
     def make_client_popen(self) -> None:
         base_url = self.get_base_url()
-        auth_cookie = self.get_auth_cookie()
-        join_data = self.get_cookie_join_data(auth_cookie)
-        if join_data is not None:
-            join_script_url = str(join_data['joinScriptUrl'])
-            authentication_url = str(join_data['authenticationUrl'])
-        else:
-            if auth_cookie is None:
-                self.log(
-                    'Launching player without auth cookie; '
-                    'client will handle the auth error.'
+        join_script_url = ''
+        authentication_url = ''
+        cmd_args = ""
+        version = self.retr_version()
+        match version:
+            case util.versions.rōblox.v712:
+                cmd_args = (
+                    "-play", ""
+                    "-a", f"roblox://experiences/start?placeId={util.const.PLACE_IDEN_CONST}"
                 )
-            else:
-                self.log(
-                    'Launching player without authenticated join data; '
-                    'client will handle the auth error.'
+            case _:
+                auth_cookie = self.get_auth_cookie()
+                join_data = self.get_cookie_join_data(auth_cookie)
+                if join_data is not None:
+                    join_script_url = str(join_data['joinScriptUrl'])
+                    authentication_url = str(join_data['authenticationUrl'])
+                else:
+                    if auth_cookie is None:
+                        self.log(
+                            'Launching player without auth cookie; '
+                            'client will handle the auth error.'
+                        )
+                    else:
+                        self.log(
+                            'Launching player without authenticated join data; '
+                            'client will handle the auth error.'
+                        )
+                    join_script_url = self.build_place_launcher_url(
+                        include_user_code=False,
+                    )
+                    authentication_url = f'{base_url}/login/negotiate.ashx'
+                cmd_args = (
+                    '-a', authentication_url,
+                    '-j', join_script_url,
+                    '-t', '1',
                 )
-            join_script_url = self.build_place_launcher_url(
-                include_user_code=False,
-            )
-            authentication_url = f'{base_url}/login/negotiate.ashx'
+
 
         self.init_popen(
             self.get_versioned_path('RobloxPlayerBeta.exe'),
-            (
-                '-a', authentication_url,
-                '-j', join_script_url,
-                '-t', '1',
-            ))
+            cmd_args
+        )
 
     @override
     def restart(self) -> None:

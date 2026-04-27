@@ -469,7 +469,7 @@ def GetAuthenticatedAppLaunchInfoPayload(user: user_item) -> dict[str, object]:
     return {
         "ageBracket": 0,
         "countryCode": "US",
-        "isPremium": False,
+        "isPremium": user.is_premium,
         "hasRobloxSubscription": False,
         **GetUserPayload(user),
     }

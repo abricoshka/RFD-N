@@ -1,6 +1,7 @@
 import json
 import re
 
+import util.auth
 from web_server._logic import web_server_handler, server_path
 
 
@@ -25,7 +26,7 @@ def send_user_details_v1(
         "created": user.created,
         "isBanned": user.accountstatus != 1,
         "externalAppDisplayName": user.username,
-        "hasVerifiedBadge": False,
+        "hasVerifiedBadge": user.is_verified,
         "id": user.id,
         "name": user.username,
         "displayName": user.username,
@@ -90,7 +91,7 @@ def send_username_users_v1(self: web_server_handler) -> bool:
 
         data.append({
             "requestedUsername": requested_username,
-            "hasVerifiedBadge": False,
+            "hasVerifiedBadge": user.is_verified,
             "id": user.id,
             "name": user.username,
             "displayName": user.username,
@@ -108,3 +109,10 @@ def _(self: web_server_handler, match: re.Match[str]) -> bool:
 @server_path('/v1/usernames/users', commands={'POST'})
 def _(self: web_server_handler) -> bool:
     return send_username_users_v1(self)
+
+
+@server_path('/v1/users/authenticated/roles', commands={'GET'})
+@util.auth.authenticated_required_api
+def authenticated_roles(self: web_server_handler) -> bool:
+    self.send_json({"roles": []})
+    return True

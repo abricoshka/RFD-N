@@ -233,7 +233,7 @@ def _build_userinfo_payload(user: user_item) -> dict[str, object]:
             f"userId={user.id}&x=150&y=150"
         ),
         "age_bracket": "Age13OrOver",
-        "premium": False,
+        "premium": user.is_premium,
         "roles": [],
         "internal_user": False,
     }

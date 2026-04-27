@@ -1,8 +1,11 @@
 # Standard library imports
 import dataclasses
 from datetime import UTC, datetime, timedelta
+import hashlib
 import json
 import random
+import secrets
+import time
 import uuid
 import base64
 import urllib.parse
@@ -13,6 +16,7 @@ from typing import Any
 # Local application imports
 import util.auth
 import util.const
+import util.verified_badge
 import game_config
 import util.versions as versions
 from util.signscript import signUTF8
@@ -54,46 +58,119 @@ def format_api_datetime(value: str | None) -> str | None:
     return date_value.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
-def _resolve_requested_place_id(
+def _read_json_body_dict(
     self: web_server_handler,
-) -> int:
-    candidates: list[object] = [
-        self.query.get("placeId"),
-        self.query.get("PlaceId"),
-    ]
-
+) -> dict[str, object]:
+    raw_body = self.read_content()
+    if not raw_body:
+        return {}
     try:
-        session_payload = json.loads(
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _read_session_payload(
+    self: web_server_handler,
+) -> dict[str, object]:
+    try:
+        payload = json.loads(
             self.headers.get("Roblox-Session-Id", "{}"),
         )
     except json.JSONDecodeError:
-        session_payload = {}
-    if isinstance(session_payload, dict):
-        candidates.extend([
-            session_payload.get("placeId"),
-            session_payload.get("PlaceId"),
-        ])
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
 
-    raw_body = self.read_content()
-    if raw_body:
-        try:
-            body_payload = json.loads(raw_body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            body_payload = None
-        if isinstance(body_payload, dict):
-            candidates.extend([
-                body_payload.get("placeId"),
-                body_payload.get("PlaceId"),
-            ])
 
-    for value in candidates:
+def _iter_request_mappings(
+    self: web_server_handler,
+):
+    body_payload = _read_json_body_dict(self)
+    if isinstance(body_payload.get("request"), dict):
+        yield body_payload["request"]
+    yield body_payload
+
+    session_payload = _read_session_payload(self)
+    if isinstance(session_payload.get("request"), dict):
+        yield session_payload["request"]
+    yield session_payload
+
+    yield self.query
+
+
+def _get_request_value(
+    self: web_server_handler,
+    *field_names: str,
+):
+    for mapping in _iter_request_mappings(self):
+        for field_name in field_names:
+            value = mapping.get(field_name)
+            if value in (None, ""):
+                continue
+            return value
+    return None
+
+
+def _coerce_int(value, default: int) -> int:
+    try:
         if value in (None, ""):
-            continue
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            continue
-    return util.const.PLACE_IDEN_CONST
+            raise ValueError
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _resolve_universe_id_for_place(
+    self: web_server_handler,
+    place_id: int,
+) -> int:
+    storage = self.server.storage
+    universe_id = storage.universe.get_id_from_root_place_id(place_id)
+    if universe_id is not None:
+        return int(universe_id)
+
+    place_obj = storage.place.check_object(place_id)
+    if place_obj is not None and place_obj.parent_universe_id is not None:
+        return int(place_obj.parent_universe_id)
+    return 0
+
+
+def _resolve_creator_for_place(
+    self: web_server_handler,
+    place_id: int,
+) -> tuple[int, str]:
+    universe_id = _resolve_universe_id_for_place(self, place_id)
+    if universe_id != 0:
+        universe = self.server.storage.universe.check(universe_id)
+        if universe is not None:
+            creator_id = int(universe[1])
+            if creator_id > 0:
+                creator_type = get_creator_type_name(int(universe[2]))
+                return (creator_id, creator_type)
+
+    asset_obj = self.server.storage.asset.resolve_object(place_id)
+    if asset_obj is not None:
+        return (
+            int(asset_obj.creator_id),
+            get_creator_type_name(int(asset_obj.creator_type)),
+        )
+    return (0, "User")
+
+
+def _resolve_requested_place_id(
+    self: web_server_handler,
+) -> int:
+    requested_value = _get_request_value(
+        self,
+        "placeId",
+        "PlaceId",
+    )
+    return _coerce_int(requested_value, util.const.PLACE_IDEN_CONST)
 
 
 def _record_previously_played(
@@ -103,6 +180,35 @@ def _record_previously_played(
     place_id = _resolve_requested_place_id(self)
     self.server.storage.previously_played.update(user_id, place_id)
     return place_id
+
+
+def _get_modern_join_machine_address(
+    self: web_server_handler,
+) -> str:
+    requested_machine_address = _get_request_value(
+        self,
+        "MachineAddress",
+        "machineAddress",
+        "serverAddress",
+    )
+    if requested_machine_address:
+        return str(requested_machine_address)
+    if self.domain.endswith(".rbolock.tk") or self.domain in {
+        "localhost",
+        "127.0.0.1",
+    }:
+        return "127.0.0.1"
+    return self.domain
+
+
+def _create_modern_join_ticket(
+    user_id: int,
+    place_id: int,
+) -> str:
+    ticket_seed = (
+        f"{user_id}:{place_id}:{time.time_ns()}:{secrets.token_hex(16)}"
+    )
+    return hashlib.sha1(ticket_seed.encode("utf-8")).hexdigest()
 
 
 def get_creator_type_name(creator_type: int) -> str:
@@ -162,7 +268,11 @@ def build_asset_details_payload(
             'Name': creator_name,
             'CreatorType': creator_type_name,
             'CreatorTargetId': asset_obj.creator_id,
-            'HasVerifiedBadge': False,
+            'HasVerifiedBadge': util.verified_badge.creator_has_verified_badge(
+                self.server.storage,
+                asset_obj.creator_type,
+                asset_obj.creator_id,
+            ),
         },
         'IconImageAssetId': 0,
         'Created': format_api_datetime(asset_obj.created_at),
@@ -558,12 +668,20 @@ def perform_and_send_join(self: web_server_handler, additional_return_data: dict
     config = self.game_config
     server_core = config.server_core
 
-    query_args: dict[str, str] = json.loads(
-        self.headers.get('Roblox-Session-Id', '{}'),
-    ) | self.query
+    query_args = _read_session_payload(self) | self.query
 
-    rcc_host_addr = str(query_args.get('MachineAddress', self.hostname))
-    rcc_port = int(query_args.get('ServerPort', self.port_num))
+    rcc_host_addr = str(_get_request_value(
+        self,
+        'MachineAddress',
+        'machineAddress',
+        'serverAddress',
+    ) or self.domain)
+    rcc_port = _coerce_int(_get_request_value(
+        self,
+        'ServerPort',
+        'serverPort',
+        'port',
+    ), self.port_num)
     current_user = get_place_launcher_user(self)
     if current_user is None:
         self.send_json({"error": "403: disallowed user"}, 403)
@@ -576,6 +694,8 @@ def perform_and_send_join(self: web_server_handler, additional_return_data: dict
 
     (id_num, username) = result
     place_id = _record_previously_played(self, current_user.id)
+    universe_id = _resolve_universe_id_for_place(self, place_id)
+    creator_id, creator_type = _resolve_creator_for_place(self, place_id)
     account_age = get_account_age_days(self, current_user)
     user_code = getattr(current_user, 'user_code', username)
 
@@ -614,6 +734,12 @@ def perform_and_send_join(self: web_server_handler, additional_return_data: dict
             f'{self.hostname}/v1.1/avatar-fetch?userId={id_num}',
         'MembershipType':
             server_core.retrieve_membership_type(id_num, user_code),
+        'CreatorId':
+            creator_id,
+        'CreatorTypeEnum':
+            creator_type,
+        'UniverseId':
+            universe_id,
     }
     
     # NOTE: the `SessionId` is saved as an HTTPS header `Roblox-Session-Id` for later requests.
@@ -638,8 +764,6 @@ def _(self: web_server_handler) -> bool:
         'VendorId': 0,
         'ScreenShotInfo': '',
         'VideoInfo': '',
-        'CreatorId': 0,
-        'CreatorTypeEnum': 'User',
         'CookieStoreFirstTimePlayKey': 'rbx_evt_ftp',
         'CookieStoreFiveMinutePlayKey': 'rbx_evt_fmp',
         'CookieStoreEnabled': False,
@@ -648,7 +772,6 @@ def _(self: web_server_handler) -> bool:
         'IsUnknownOrUnder13': False,
         'DataCenterId': 0,
         'FollowUserId': 0,
-        'UniverseId': 0,
     }, prefix=b'--rbxsig%0%\r\n')
     return True
 
@@ -666,8 +789,6 @@ def _(self: web_server_handler) -> bool:
         'SuperSafeChat': True,
         'ClientTicket': '2022-03-26T05:13:05.7649319Z;dj09X5iTmYtOPwh0hbEC8yvSO1t99oB3Yh5qD/sinDFszq3hPPaL6hH16TvtCen6cABIycyDv3tghW7k8W+xuqW0/xWvs0XJeiIWstmChYnORzM1yCAVnAh3puyxgaiIbg41WJSMALRSh1hoRiVFOXw4BKjSKk7DrTTcL9nOG1V5YwVnmAJKY7/m0yZ81xE99QL8UVdKz2ycK8l8JFvfkMvgpqLNBv0APRNykGDauEhAx283vARJFF0D9UuSV69q6htLJ1CN2kXL0Saxtt/kRdoP3p3Nhj2VgycZnGEo2NaG25vwc/KzOYEFUV0QdQPC8Vs2iFuq8oK+fXRc3v6dnQ==;BO8oP7rzmnIky5ethym6yRECd6H14ojfHP3nHxSzfTs=;XsuKZL4TBjh8STukr1AgkmDSo5LGgQKQbvymZYi/80TYPM5/MXNr5HKoF3MOT3Nfm0MrubracyAtg5O3slIKBg==;6',
         'GameId': util.const.PLACE_IDEN_CONST,
-        'CreatorId': 0,
-        'CreatorTypeEnum': 'User',
         'CookieStoreFirstTimePlayKey': 'rbx_evt_ftp',
         'CookieStoreFiveMinutePlayKey': 'rbx_evt_fmp',
         'CookieStoreEnabled': True,
@@ -675,7 +796,6 @@ def _(self: web_server_handler) -> bool:
         'GameChatType': 'AllUsers',
         'AnalyticsSessionId': 'c89589f1-d1de-46e3-80e0-2703d1159409',
         'DataCenterId': 302,
-        'UniverseId': 994732206,
         'FollowUserId': 0,
         'CountryCode': 'US',
         'RandomSeed1': '7HOfysTid4XsV/3mBPPPhKHIykE4GXSBBBzd93rplbDQ3bNSgPFcR9auB780LjNYg+4mbNQPOqTmJ2o3hUefmw==',
@@ -702,11 +822,13 @@ def _(self: web_server_handler) -> bool:
     config = self.game_config
     server_core = config.server_core
 
-    query_args: dict[str, str] = json.loads(
-        self.headers.get('Roblox-Session-Id', '{}'),
-    ) | self.query
-
-    rcc_port = int(query_args.get('ServerPort', self.port_num))
+    rcc_host_addr = _get_modern_join_machine_address(self)
+    rcc_port = _coerce_int(_get_request_value(
+        self,
+        'ServerPort',
+        'serverPort',
+        'port',
+    ), self.port_num)
     current_user = get_authenticated_join_user(self)
     if current_user is None:
         self.send_json({"error": "403: disallowed user"}, 403)
@@ -719,32 +841,53 @@ def _(self: web_server_handler) -> bool:
 
     (id_num, username) = result
     place_id = _record_previously_played(self, current_user.id)
+    universe_id = _resolve_universe_id_for_place(self, place_id)
+    creator_id, creator_type = _resolve_creator_for_place(self, place_id)
     account_age = get_account_age_days(self, current_user)
-
-    jobId = str(uuid.uuid4())
+    browser_tracker_id = _coerce_int(_get_request_value(
+        self,
+        'browserTrackerId',
+        'BrowserTrackerId',
+    ), 0)
+    client_ticket = _create_modern_join_ticket(
+        current_user.id,
+        place_id,
+    )
+    session_id = _create_modern_join_ticket(
+        current_user.id,
+        universe_id,
+    )
+    requested_job_id = _get_request_value(
+        self,
+        'gameJoinAttemptId',
+        'GameJoinAttemptId',
+    ) or _get_request_value(
+        self,
+        'gameId',
+        'GameId',
+        'jobId',
+        'JobId',
+    )
+    jobId = str(requested_job_id or uuid.uuid4())
     status = 2  # Assuming ready
     joinScript = {
         "ClientPort": 0,
-        "MachineAddress": self.domain,
-        "ServerConnections": [{"Port": rcc_port, "Address": self.domain}],
+        "MachineAddress": rcc_host_addr,
+        "ServerConnections": [{"Port": rcc_port, "Address": rcc_host_addr}],
         "ServerPort": rcc_port,
         "PingUrl": "",
         "PingInterval": 120,
         "UserName": username,
         "DisplayName": username,
+        "HasVerifiedBadge": util.verified_badge.user_has_verified_badge(
+            self.server.storage,
+            current_user.id,
+        ),
         "SeleniumTestMode": False,
         "UserId": id_num,
-        "ClientTicket": generate_client_ticket(
-            self,
-            id_num,
-            username,
-            jobId,
-            f'{self.hostname}/v1.1/avatar-fetch?userId={id_num}',
-            ticket_version=4,
-            place_id=place_id,
-            account_age=account_age,
-        ),
+        "ClientTicket": client_ticket,
         "SuperSafeChat": False,
+        "FlexibleChatEnabled": False,
         "PlaceId": place_id,
         "MeasurementUrl": "",
         "WaitingForCharacterGuid": str(uuid.uuid4()),
@@ -753,39 +896,48 @@ def _(self: web_server_handler) -> bool:
         "VendorId": 0,
         "ScreenShotInfo": "",
         "VideoInfo": "",
-        "CreatorId": 0,
-        "CreatorTypeEnum": "User",
+        "CreatorId": creator_id,
+        "CreatorTypeEnum": creator_type,
         "MembershipType": "None",
         "AccountAge": account_age,
         "CookieStoreFirstTimePlayKey": "rbx_evt_ftp",
         "CookieStoreFiveMinutePlayKey": "rbx_evt_fmp",
-        "CookieStoreEnabled": True,
+        "CookieStoreEnabled": False,
         "IsRobloxPlace": False,
-        "UniverseId": 994732206,
+        "UniverseId": universe_id,
         "GenerateTeleportJoin": False,
         "IsUnknownOrUnder13": False,
-        "SessionId": f"{str(uuid.uuid4())}|{str(jobId)}|0|{str(self.domain)}|8|{utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')}|0|null|AAAAA",
-        "DataCenterId": 69420,
+        "GameChatType": "AllUsers",
+        "SessionId": session_id,
+        "AnalyticsSessionId": session_id,
+        "DataCenterId": 370,
         "FollowUserId": 0,
-        "BrowserTrackerId": 0,
+        "BrowserTrackerId": browser_tracker_id,
         "UsePortraitMode": False,
-        "CharacterAppearance": f'{self.hostname}/v1.1/avatar-fetch?userId={id_num}',
+        "CharacterAppearance": f'https://avatar.rbolock.tk/v1/avatar-fetch?userId={id_num}&placeId={place_id}',
         "GameId": jobId,
         "RobloxLocale": "en_us",
         "GameLocale": "en_us",
         "characterAppearanceId": id_num,
         "CharacterAppearanceId": id_num,
+        "CountryCode": "US",
+        "AlternateName": "",
+        "RandomSeed1": "",
+        "ClientPublicKeyData": "Test",
+        "RccVersion": "0.671.0.6710816",
+        "ChannelName": "",
+        "VerifiedAMP": 0,
+        "PrivateServerOwnerID": 0,
+        "PrivateServerID": "",
     }
     response = json.dumps({
         "jobId": jobId,
         "status": status,
-        "authenticationUrl": f"{self.hostname}/Login/Negotiate.ashx",
-        "authenticationTicket": util.auth.CreateAuthTicket(
-            self.server.storage,
-            current_user.id,
-        ),
+        "authenticationUrl": f"{self.hostname}/game/join.ashx",
+        "authenticationTicket": client_ticket,
         "message": None,
         "rand": random.randint(0, 100000000000),
+        "joinScriptUrl": f"{self.hostname}/game/join.ashx?placeId={place_id}",
         "joinScript": joinScript
     }).encode('utf-8')
 

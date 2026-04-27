@@ -1,13 +1,51 @@
 # Standard library imports
 import re
 import json
+import copy
+import os
+import pyzstd
 
 # Local application imports
 import assets.returns as returns
 import util.const
+import util.resource
 from web_server._logic import web_server_handler, server_path, web_server_ssl
 import web_server.settings_files
 import util.versions as versions
+
+
+CLIENT_SETTINGS_OVERRIDES = {
+    # Keep these diagnostics enabled while local_rcc is being brought up on
+    # 2026 clients. Without this, ScriptContext often logs only script names.
+    "DFFlagNoOutputFromLuau": "False",
+    "DFFlagAppendSourceIdToRequireLog": "True",
+    "FFlagEnableCoreScriptBacktraceReporting": "True",
+    "DFIntReportLocalPlayerMissingStackTraceUserIdPercentage": "100",
+    "FLogScriptContext": "6",
+    "FLogCoreScripts": "6",
+    "FLogScriptPrint": "6",
+}
+
+
+def with_client_settings_overrides(payload: dict) -> dict:
+    result = copy.deepcopy(payload)
+    settings = result.setdefault('applicationSettings', {})
+    settings.update(CLIENT_SETTINGS_OVERRIDES)
+    return result
+
+
+def get_player_settings_dictionary_path(
+    self: web_server_handler,
+    dictionary_hash: str,
+) -> str:
+    return util.resource.retr_rōblox_full_path(
+        self.game_config.game_setup.roblox_version,
+        util.resource.bin_subtype.PLAYER,
+        'PlatformContent',
+        'pc',
+        'shared_compression_dictionaries',
+        f'{dictionary_hash}.dict',
+    )
 
 @server_path('/rfd/default-user-code')
 def _(self: web_server_handler) -> bool:
@@ -81,7 +119,7 @@ def _(self: web_server_handler) -> bool:
 @server_path('/Setting/QuietGet/StudioAppSettings/')
 @server_path('/Setting/QuietGet/ClientAppSettings/')
 def _(self: web_server_handler) -> bool:
-    self.send_json({})
+    self.send_json(CLIENT_SETTINGS_OVERRIDES)
     return True
 
 
@@ -128,8 +166,10 @@ def _(self: web_server_handler) -> bool:
 @server_path('/v2/settings/application/PCStudioApp', versions={versions.rōblox.v574})
 def _(self: web_server_handler) -> bool:
     self.send_json(
-        web_server.settings_files.read_settings_json(
-            'windows_2023_fflags.json',
+        with_client_settings_overrides(
+            web_server.settings_files.read_settings_json(
+                'windows_2023_fflags.json',
+            ),
         ),
     )
     return True
@@ -140,8 +180,10 @@ def _(self: web_server_handler) -> bool:
 )
 def _(self: web_server_handler) -> bool:
     self.send_json(
-        web_server.settings_files.read_settings_json(
-            'windows_2026_fflags.json',
+        with_client_settings_overrides(
+            web_server.settings_files.read_settings_json(
+                'windows_2026_fflags.json',
+            ),
         ),
     )
     return True
@@ -150,8 +192,10 @@ def _(self: web_server_handler) -> bool:
 @server_path('/v2/settings-compressed/application/PCDesktopClient.zst')
 def _(self: web_server_handler) -> bool:
     self.send_json(
-        web_server.settings_files.read_settings_json(
-            'PCDesktopClient.zst',
+        with_client_settings_overrides(
+            web_server.settings_files.read_settings_json(
+                'PCDesktopClient.zst',
+            ),
         ),
     )
     return True
@@ -159,8 +203,10 @@ def _(self: web_server_handler) -> bool:
 @server_path('/v2/settings/application/PCDesktopClient')
 def _(self: web_server_handler) -> bool:
     self.send_json(
-        web_server.settings_files.read_settings_json(
-            'PCDesktopClient.json',
+        with_client_settings_overrides(
+            web_server.settings_files.read_settings_json(
+                'PCDesktopClient.json',
+            ),
         ),
     )
     return True
@@ -171,10 +217,30 @@ def _(self: web_server_handler) -> bool:
     commands={'GET'},
 )
 def _(self: web_server_handler, match: re.Match[str]) -> bool:
-    del match
     _file_path, payload = web_server.settings_files.read_matching_settings_bytes(
         '*.dcz',
     )
+    dictionary_hash = match.group(1)
+    dictionary_path = get_player_settings_dictionary_path(
+        self,
+        dictionary_hash,
+    )
+    if os.path.isfile(dictionary_path):
+        with open(dictionary_path, 'rb') as dictionary_file:
+            dictionary_data = dictionary_file.read()
+        zstd_dict = pyzstd.ZstdDict(
+            dictionary_data,
+            is_raw=True,
+        )
+        decoded = pyzstd.decompress(payload, zstd_dict)
+        settings = with_client_settings_overrides(
+            json.loads(decoded.decode('utf-8')),
+        )
+        payload = pyzstd.compress(
+            json.dumps(settings, separators=(',', ':')).encode('utf-8'),
+            zstd_dict=zstd_dict,
+        )
+
     self.send_data(
         payload,
         content_type='application/octet-stream',
@@ -207,9 +273,18 @@ def _(self: web_server_handler) -> bool:
 
 # Stubs
 @server_path('/v1/agreements-resolution/Web')
+@server_path('/user-agreements/v1/agreements-resolution/Web')
 @server_path('/v2/ota-version/WindowsPlayer')
 def _(self: web_server_handler) -> bool:
     self.send_json([])
+    return True
+
+
+@server_path('/v2/user-channel', commands={'GET'})
+def _(self: web_server_handler) -> bool:
+    self.send_json({
+        "channelName": "production",
+    })
     return True
 
 

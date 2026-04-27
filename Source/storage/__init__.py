@@ -8,11 +8,16 @@ from . import (
     auth_ticket,
     auth_session,
     friend,
+    friend_relationship,
+    friend_request,
+    follow_relationship,
     gameserver,
     groups,
     ingame_player,
     players,
     user,
+    user_avatar,
+    user_avatar_asset,
     user_email,
     userthumbnail,
     persistence,
@@ -48,12 +53,21 @@ class storager:
         self.asset_vote = asset_vote.database(*arg_list)
         self.auth_ticket = auth_ticket.database(*arg_list)
         self.auth_session = auth_session.database(*arg_list)
+        self.friend_relationship = friend_relationship.database(*arg_list)
+        self.friend_request = friend_request.database(*arg_list)
+        self.follow_relationship = follow_relationship.database(*arg_list)
         self.friend = friend.database(*arg_list)
+        self.friend.link_databases(
+            self.friend_relationship,
+            self.friend_request,
+        )
         self.gameserver = gameserver.database(*arg_list)
         self.group = groups.database(*arg_list)
         self.ingame_player = ingame_player.database(*arg_list)
         self.players = players.database(*arg_list)
         self.user = user.database(*arg_list)
+        self.user_avatar = user_avatar.database(*arg_list)
+        self.user_avatar_asset = user_avatar_asset.database(*arg_list)
         self.user_email = user_email.database(*arg_list)
         self.userthumbnail = userthumbnail.database(*arg_list)
         self.persistence = persistence.database(*arg_list)

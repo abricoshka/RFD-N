@@ -374,3 +374,34 @@ class database(_logic.sqlite_connector_base):
             items=items,
             has_next=len(results) > max_rows,
         )
+
+    def list_ids_for_creator(
+        self,
+        creator_type: int,
+        creator_id: int,
+        *,
+        limit: int = 18,
+    ) -> list[int]:
+        results = self.sqlite.execute_and_fetch(
+            query=f"""
+            SELECT {self.field.ID.value}
+            FROM "{self.TABLE_NAME}"
+            WHERE {self.field.CREATOR_TYPE.value} = ?
+            AND {self.field.CREATOR_ID.value} = ?
+            AND {self.field.IS_PUBLIC.value} = TRUE
+            AND {self.field.PLACE_YEAR.value} >= ?
+            ORDER BY
+                {self.field.VISIT_COUNT.value} DESC,
+                {self.field.UPDATED_AT.value} DESC,
+                {self.field.ID.value} DESC
+            LIMIT ?
+            """,
+            values=(
+                creator_type,
+                creator_id,
+                PlaceYear.Twenty.value,
+                limit,
+            ),
+        )
+        assert results is not None
+        return [int(row[0]) for row in results]

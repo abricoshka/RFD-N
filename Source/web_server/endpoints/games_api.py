@@ -1,16 +1,28 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 import re
 
+from enums.AssetType import AssetType
 import util.auth
+import util.verified_badge
 from web_server._logic import web_server_handler, server_path
 
 
 def _format_api_datetime(value: str) -> str:
     try:
-        return datetime.fromisoformat(value).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    else:
+        parsed = parsed.astimezone(UTC)
+
+    fraction = ""
+    milliseconds = parsed.microsecond // 1000
+    if milliseconds:
+        fraction = "." + f"{milliseconds:03d}".rstrip("0")
+    return parsed.strftime("%Y-%m-%dT%H:%M:%S") + fraction + "Z"
 
 
 def _get_creator_name(
@@ -66,6 +78,153 @@ def _get_live_player_counts(
     for place_id, player_count in stored_totals.items():
         live_totals.setdefault(place_id, player_count)
     return dict(live_totals)
+
+
+def _build_canonical_url_path(
+    root_place_id: int,
+    name: str,
+) -> str:
+    slug = re.sub(r"[\"'`]", "", name)
+    slug = re.sub(r"[^0-9A-Za-z]+", "-", slug).strip("-")
+    if not slug:
+        slug = str(root_place_id)
+    return f"/games/{root_place_id}/{slug}"
+
+
+def _get_universe_avatar_type(place_rig_choice: int) -> str:
+    if place_rig_choice == 1:
+        return "MorphToR6"
+    if place_rig_choice == 2:
+        return "MorphToR15"
+    return "PlayerChoice"
+
+
+def _parse_requested_universe_ids(
+    self: web_server_handler,
+) -> list[int] | None:
+    raw_values = getattr(self, "query_lists", {}).get("universeIds")
+    if raw_values is None:
+        raw_value = self.query.get("universeIds")
+        raw_values = [] if raw_value is None else [raw_value]
+
+    requested_ids: list[int] = []
+    seen_ids: set[int] = set()
+    for raw_value in raw_values:
+        for part in str(raw_value).split(","):
+            cleaned_part = part.strip()
+            if not cleaned_part:
+                return None
+
+            try:
+                universe_id = int(cleaned_part)
+            except ValueError:
+                return None
+            if universe_id <= 0:
+                return None
+            if universe_id in seen_ids:
+                continue
+            seen_ids.add(universe_id)
+            requested_ids.append(universe_id)
+
+    return requested_ids or None
+
+
+def _send_invalid_universe_ids(self: web_server_handler) -> bool:
+    self.send_json(
+        {"errors": [{"code": 8, "message": "The universe IDs specified are invalid."}]},
+        400,
+    )
+    return True
+
+
+@server_path('/v1/games', commands={'GET'})
+def _(self: web_server_handler) -> bool:
+    universe_ids = _parse_requested_universe_ids(self)
+    if universe_ids is None:
+        return _send_invalid_universe_ids(self)
+
+    storage = self.server.storage
+    authenticated_user = util.auth.GetCurrentUser(self)
+    requested_universes: list[tuple[int, tuple, object]] = []
+    place_ids: list[int] = []
+    for universe_id in universe_ids:
+        universe = storage.universe.check(universe_id)
+        if universe is None:
+            continue
+
+        place = storage.place.check_object(int(universe[0]))
+        if (
+            place is None or
+            not place.is_public or
+            place.assetObj is None or
+            place.assetObj.asset_type != AssetType.Place or
+            not bool(universe[11])
+        ):
+            continue
+
+        requested_universes.append((universe_id, universe, place))
+        place_ids.append(place.placeid)
+
+    player_totals = _get_live_player_counts(self, place_ids)
+    favorite_totals = storage.asset_favorite.get_totals_for_assets(place_ids)
+    favorited_asset_ids = (
+        storage.asset_favorite.get_favorited_asset_ids_for_user(
+            authenticated_user.id,
+            place_ids,
+        )
+        if authenticated_user is not None else
+        set()
+    )
+
+    data = []
+    for universe_id, universe, place in requested_universes:
+        asset = place.assetObj
+        assert asset is not None
+        creator_type = "User" if int(universe[2]) == 0 else "Group"
+        creator_name = _get_creator_name(self, int(universe[2]), int(universe[1]))
+        data.append({
+            "id": universe_id,
+            "rootPlaceId": place.placeid,
+            "name": asset.name,
+            "description": asset.description,
+            "sourceName": None,
+            "sourceDescription": None,
+            "creator": {
+                "id": int(universe[1]),
+                "name": creator_name,
+                "type": creator_type,
+                "isRNVAccount": False,
+                "hasVerifiedBadge": util.verified_badge.creator_has_verified_badge(
+                    storage,
+                    int(universe[2]),
+                    int(universe[1]),
+                ),
+            },
+            "price": None,
+            "allowedGearGenres": ["All"],
+            "allowedGearCategories": [],
+            "isGenreEnforced": True,
+            "copyingAllowed": False,
+            "playing": int(player_totals.get(place.placeid, 0)),
+            "visits": max(int(universe[13]), int(place.visitcount)),
+            "maxPlayers": int(place.maxplayers),
+            "created": _format_api_datetime(str(universe[3])),
+            "updated": _format_api_datetime(str(universe[4])),
+            "studioAccessToApisAllowed": False,
+            "createVipServersAllowed": False,
+            "universeAvatarType": _get_universe_avatar_type(place.rig_choice.value),
+            "genre": "All",
+            "genre_l1": "",
+            "genre_l2": "",
+            "untranslated_genre_l1": "na",
+            "isAllGenre": True,
+            "isFavoritedByUser": place.placeid in favorited_asset_ids,
+            "favoritedCount": int(favorite_totals.get(place.placeid, 0)),
+            "canonicalUrlPath": _build_canonical_url_path(place.placeid, asset.name),
+        })
+
+    self.send_json({"data": data})
+    return True
 
 
 @server_path('/maintenance-status/v1/alerts/alert-info', commands={'GET'})
@@ -147,7 +306,11 @@ def _(self: web_server_handler) -> bool:
             "creatorId": universe_obj.creator_id,
             "creatorName": creator_name,
             "creatorType": "User" if universe_obj.creator_type == 0 else "Group",
-            "creatorHasVerifiedBadge": False,
+            "creatorHasVerifiedBadge": util.verified_badge.creator_has_verified_badge(
+                storage,
+                universe_obj.creator_type,
+                universe_obj.creator_id,
+            ),
             "upVotes": up_votes,
             "downVotes": down_votes,
             "totalUpVotes": up_votes,
@@ -398,13 +561,22 @@ def _(self: web_server_handler) -> bool:
     return True
 
 
-@server_path('/v1/private-servers/enabled-in-universe/')
-def _(self: web_server_handler) -> bool:
+@server_path(r'/v1/private-servers/enabled-in-universe/(\d+)', regex=True)
+def _(self: web_server_handler, match: re.Match[str]) -> bool:
+    universe_id = int(match.group(1))
+    universe = self.server.storage.universe.check(universe_id)
+    if universe is None:
+        self.send_json({
+            "errors": [{"code": 2, "message": "The requested universe does not exist."}],
+        }, 404)
+        return True
+
     self.send_json({"privateServersEnabled": True})
     return True
 
 
 @server_path(r'/v1/games/(\d+)/game-passes', regex=True)
+@util.auth.authenticated_required_api
 def _(self: web_server_handler, match: re.Match[str]) -> bool:
     universe_id = int(match.group(1))
     universe = self.server.storage.universe.check(universe_id)

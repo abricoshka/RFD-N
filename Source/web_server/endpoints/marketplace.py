@@ -9,6 +9,7 @@ from urllib3 import request
 # Local application imports
 from web_server._logic import web_server_handler, server_path
 import util.const
+import util.verified_badge
 from enums.AssetType import AssetType
 
 
@@ -565,7 +566,11 @@ def _(self: web_server_handler) -> bool:
                 [asset_obj.moderation_status]
             ),
             "itemRestrictions": [],
-            "creatorHasVerifiedBadge": False,
+            "creatorHasVerifiedBadge": util.verified_badge.creator_has_verified_badge(
+                storage,
+                asset_obj.creator_type,
+                asset_obj.creator_id,
+            ),
             "creatorType": asset_obj.creator_type,
             "creatorTargetId": asset_obj.creator_id,
             "creatorName": creator_name,

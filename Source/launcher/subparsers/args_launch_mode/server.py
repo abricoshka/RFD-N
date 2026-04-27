@@ -219,8 +219,8 @@ def _(
     has_ipv6: bool = not args_ns.ipv4_only
     has_ipv4: bool = not args_ns.ipv6_only
 
-    web_routine_args = set[logic.base_entry]()
-    rcc_routine_args = set[logic.base_entry]()
+    web_routine_args: list[logic.base_entry] = []
+    rcc_routine_args: list[logic.base_entry] = []
     log_filter = gen_log_filter(
         parser, args_ns,
     )
@@ -240,7 +240,7 @@ def _(
         if not args_ns.skip_web:
             if has_ipv6:
                 # IPv6 goes first since `localhost` also resolves first to [::1] on the client.
-                web_routine_args.add(web.obj_type(
+                web_routine_args.append(web.obj_type(
                     web_port=web_port,
                     is_ssl=True,
                     is_ipv6=True,
@@ -250,7 +250,7 @@ def _(
                     game_config=game_config,
                 ))
             if has_ipv4:
-                web_routine_args.add(web.obj_type(
+                web_routine_args.append(web.obj_type(
                     web_port=web_port,
                     is_ssl=True,
                     is_ipv6=False,
@@ -263,7 +263,7 @@ def _(
         if not args_ns.skip_rcc:
             match game_config.game_setup.roblox_version:
                 case util.versions.rōblox.v463, util.versions.rōblox.v347:
-                    rcc_routine_args.add(
+                    rcc_routine_args.append(
                         rcc.obj_type(
                             # TODO: add support for RCC to connect to hosts other than `localhost`.
                             web_host='localhost',
@@ -274,7 +274,7 @@ def _(
                         ),
                     )
                 case _:
-                    rcc_routine_args.add(
+                    rcc_routine_args.append(
                         studio_server.obj_type(
                             web_host='localhost',
                             web_port=web_port,
@@ -285,7 +285,7 @@ def _(
                     )
 
         if args_ns.run_client:
-            rcc_routine_args.add(
+            rcc_routine_args.append(
                 player.obj_type(
                     rcc_host='127.0.0.1',
                     web_host='127.0.0.1',
@@ -294,7 +294,7 @@ def _(
                     user_code=args_ns.user_code,
                     logger=log_filter,
                     # Some CoreGUI elements don't render properly if we join too early.
-                    launch_delay=3,
+                    launch_delay=6,
                 ),
             )
 

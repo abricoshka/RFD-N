@@ -576,6 +576,33 @@ def _build_asset_thumbnail_url(
     return f"{self.hostname}/Game/Tools/ThumbnailAsset.ashx?aid={asset_id}&fmt=png&wd={width}&ht={height}"
 
 
+def _build_game_thumbnail_url(
+    self: web_server_handler,
+    asset_id: int,
+    width: int,
+    height: int,
+) -> str:
+    return (
+        f"{self.hostname}/asset-thumbnail/image?"
+        f"assetId={asset_id}&width={width}&height={height}"
+    )
+
+
+def _build_placeholder_batch_url(
+    self: web_server_handler,
+    request_type: str,
+    width: int,
+    height: int,
+) -> str:
+    if request_type == "Avatar":
+        return _build_static_url(self, USER_AVATAR_PLACEHOLDER_REL_PATH)
+    if request_type == "AvatarHeadShot":
+        return _build_static_url(self, USER_HEADSHOT_PLACEHOLDER_REL_PATH)
+    if request_type == "GameIcon":
+        return _build_game_icon_url(self, None, width, height)
+    return _build_static_url(self, GAME_BANNER_PLACEHOLDER_REL_PATH)
+
+
 @server_path(r"/rfd/image-cdn/v1/(?P<image_key>[A-Za-z0-9]+)", regex=True, commands={"GET"})
 def serve_cdn_image(self: web_server_handler, match: re.Match[str]) -> bool:
     image_key = match.group("image_key")
@@ -1058,39 +1085,117 @@ def batch_image_request(self: web_server_handler) -> bool:
         try:
             requested_width = int(split_size[0])
             requested_height = int(split_size[1])
-            target_id = int(request_obj["targetId"])
         except (TypeError, ValueError):
             continue
+        raw_target_id = request_obj.get("targetId")
+        try:
+            target_id = int(raw_target_id)
+        except (TypeError, ValueError):
+            target_id = None
 
         target_width = min(DEFAULT_IMAGE_SIZES, key=lambda allowed: abs(allowed - requested_width))
         target_height = min(DEFAULT_IMAGE_SIZES, key=lambda allowed: abs(allowed - requested_height))
         request_type = request_obj["type"]
+        version = None
 
         if request_type == "Avatar":
-            image_url = _build_avatar_image_url(self, target_id, target_width, target_height)
+            if target_id is None:
+                image_url = _build_placeholder_batch_url(
+                    self,
+                    request_type,
+                    target_width,
+                    target_height,
+                )
+            else:
+                image_url = _build_avatar_image_url(
+                    self,
+                    target_id,
+                    target_width,
+                    target_height,
+                )
             version = "TN3"
         elif request_type == "AvatarHeadShot":
-            image_url = _build_headshot_image_url(self, target_id, target_width, target_height)
+            if target_id is None:
+                image_url = _build_placeholder_batch_url(
+                    self,
+                    request_type,
+                    target_width,
+                    target_height,
+                )
+            else:
+                image_url = _build_headshot_image_url(
+                    self,
+                    target_id,
+                    target_width,
+                    target_height,
+                )
             version = "1"
         elif request_type == "GameIcon":
-            _content_hash, place_id = _get_place_icon_hash(
-                self,
-                target_id,
-                prefer_universe=True,
-            )
-            if place_id is None and _content_hash is None:
-                continue
-            image_url = _build_game_icon_url(self, place_id, target_width, target_height)
-            version = None
-        elif request_type in {"GameThumbnail", "Asset"}:
-            image_url = _build_asset_thumbnail_url(self, target_id, target_width, target_height)
-            version = None
+            if target_id is None:
+                image_url = _build_placeholder_batch_url(
+                    self,
+                    request_type,
+                    target_width,
+                    target_height,
+                )
+                version = None
+            else:
+                _content_hash, place_id = _get_place_icon_hash(
+                    self,
+                    target_id,
+                    prefer_universe=True,
+                )
+                if place_id is None and _content_hash is None:
+                    image_url = _build_placeholder_batch_url(
+                        self,
+                        request_type,
+                        target_width,
+                        target_height,
+                    )
+                else:
+                    image_url = _build_game_icon_url(self, place_id, target_width, target_height)
+                version = None
+        elif request_type == "GameThumbnail":
+            if target_id is None:
+                image_url = _build_placeholder_batch_url(
+                    self,
+                    request_type,
+                    target_width,
+                    target_height,
+                )
+            else:
+                image_url = _build_game_thumbnail_url(
+                    self,
+                    target_id,
+                    target_width,
+                    target_height,
+                )
+        elif request_type == "Asset":
+            if target_id is None:
+                image_url = _build_placeholder_batch_url(
+                    self,
+                    request_type,
+                    target_width,
+                    target_height,
+                )
+            else:
+                image_url = _build_asset_thumbnail_url(
+                    self,
+                    target_id,
+                    target_width,
+                    target_height,
+                )
         else:
             continue
 
+        if target_id is None:
+            target_id_value = 0
+        else:
+            target_id_value = target_id
+
         processed_requests.append({
             "requestId": request_obj["requestId"],
-            "targetId": target_id,
+            "targetId": target_id_value,
             "state": "Completed",
             "imageUrl": image_url,
             "version": version,

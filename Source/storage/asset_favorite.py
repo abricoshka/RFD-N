@@ -181,3 +181,27 @@ class database(_logic.sqlite_connector_base):
             int(row[0]): int(row[1])
             for row in results
         }
+
+    def get_favorited_asset_ids_for_user(
+        self,
+        user_id: int,
+        asset_ids: list[int],
+    ) -> set[int]:
+        if not asset_ids:
+            return set()
+
+        placeholders = ",".join("?" for _ in asset_ids)
+        results = self.sqlite.execute_and_fetch(
+            query=f"""
+            SELECT {self.field.ASSET_ID.value}
+            FROM "{self.TABLE_NAME}"
+            WHERE {self.field.USER_ID.value} = ?
+            AND {self.field.ASSET_ID.value} IN ({placeholders})
+            """,
+            values=(user_id, *asset_ids),
+        )
+        assert results is not None
+        return {
+            int(row[0])
+            for row in results
+        }
