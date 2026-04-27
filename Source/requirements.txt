@@ -1,5 +1,3 @@
-sqlite-worker==0.0.4
-cryptography~=44.0.1
 trustme~=1.2.0
 urllib3~=2.6.0
 pyzstd~=0.16.2
@@ -9,4 +7,5 @@ tqdm_vendored @ git+https://github.com/Windows81/Vendored-Tqdm
 sqlite-worker @ git+https://github.com/Windows81/SQLite-Worker
 pywin32==310 ; sys_platform == 'win32'
 argon2-cffi
-DracoPy
+zstandard~=0.25.0
+dracopy~=2.0.0

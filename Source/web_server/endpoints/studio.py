@@ -60,9 +60,9 @@ def _(self: web_server_handler) -> bool:
         "RobuxBalance": funds or 0,
         "HasPasswordSet": has_password_set,
         "AgeBracket": 0,
-        "Roles": [],
+        "Roles": ["Soothsayer", "BetaTester"],
         "EmailNotificationEnabled": False,
-        "PasswordNotifcationEnabled": False
+        "PasswordNotifcationEnabled": False,
     })
 
     self.send_response(200)

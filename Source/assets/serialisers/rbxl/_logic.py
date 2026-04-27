@@ -3,7 +3,6 @@ import hashlib
 from typing import Callable, override
 import dataclasses
 import lz4.block
-import pyzstd
 import io
 
 HEADER_SIGNATURE = b'<roblox!\x89\xff\r\n\x1a\n'
@@ -121,9 +120,11 @@ class chunk_data_type_sstr(chunk_data_type):
         # @regg.ie: Excluding, it's a sum of the payload itself. The hash is ignored by the engine and not actually ever emitted by Studio, though
         # @regg.ie: As per rbx-dom's spec
         for string_value in self.strings:
-            md5_hash = hashlib.md5(string_value).digest()
+            import assets.serialisers
+            parsed_string, _changed = assets.serialisers.parse(string_value)
+            md5_hash = hashlib.md5(parsed_string).digest()
             writer.write(md5_hash)
-            wrapped = wrap_string(string_value)
+            wrapped = wrap_string(parsed_string)
             writer.write(wrapped)
         return writer.getvalue()
 
@@ -163,10 +164,12 @@ class chunk_info:
     chunk_name: bytes
     reserved_metadata: bytes
     chunk_data: chunk_data_type
+    should_recompress: bool = False
 
 
-type TRANSFORM_TYPE = list[Callable[[
-    'rbxl_parser', chunk_data_type], chunk_data_type | None]]
+type TRANSFORM_TYPE = list[Callable[
+    ['rbxl_parser', chunk_data_type], chunk_data_type | None
+]]
 
 
 class rbxl_parser:
@@ -255,11 +258,11 @@ class rbxl_parser:
         assert chunk_name == chunk_name.upper()
 
         compressed_size = int.from_bytes(
-            self.read_stream.read(4),
+            self.read_stream.read(INT_SIZE),
             byteorder='little',
         )
         uncompressed_size = int.from_bytes(
-            self.read_stream.read(4),
+            self.read_stream.read(INT_SIZE),
             byteorder='little',
         )
         reserved_metadata = self.read_stream.read(4)
@@ -268,6 +271,7 @@ class rbxl_parser:
         if compressed_size == 0:
             chunk_data_bytes = self.read_stream.read(uncompressed_size)
         else:
+            import pyzstd
             compressed_chunk_data = self.read_stream.read(compressed_size)
             if compressed_chunk_data.startswith(b'\x28\xB5\x2F\xFD'):
                 chunk_data_bytes = pyzstd.decompress(compressed_chunk_data)
@@ -287,20 +291,29 @@ class rbxl_parser:
 
     @staticmethod
     def compile_chunk(info: chunk_info) -> bytes:
-        chunk_data_bytes = info.chunk_data.to_bytes()
-        new_size = len(chunk_data_bytes)
+        chunk_data_bytes = uncompressed_bytes = info.chunk_data.to_bytes()
+        uncompressed_size = len(chunk_data_bytes)
+        compressed_size = 0
+
+        if info.should_recompress:
+            chunk_data_bytes = compressed_bytes = lz4.block.compress(
+                source=uncompressed_bytes,
+                store_size=False,
+            )
+            compressed_size = len(compressed_bytes)
+
         return b''.join([
             info.chunk_name,
             int.to_bytes(
-                0,
+                compressed_size,
                 byteorder='little',
-                length=4,
+                length=INT_SIZE,
             ),
             int.to_bytes(
-                new_size,
+                uncompressed_size,
                 byteorder='little',
-                length=4,
+                length=INT_SIZE,
             ),
-            info.reserved_metadata,
-            info.chunk_data.to_bytes(),
+            b'RFD\0',  # info.reserved_metadata,
+            chunk_data_bytes,
         ])
