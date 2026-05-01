@@ -120,7 +120,7 @@ def _(self: web_server_handler) -> bool:
         self.send_error(
             403,
             "Server hosters don't tend to like exposing their place files.  " +
-            "Ask them if they'd be willing to lend this one to you.",
+            "Ask yours if willing to lend this one to you.",
         )
         return True
 
