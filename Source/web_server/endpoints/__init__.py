@@ -7,6 +7,7 @@ from . import (
     assets,
     avatar,
     badges,
+    communication,
     data_transfer,
     discovery_api,
     explore_api,
@@ -28,7 +29,6 @@ from . import (
     image,
     setup_rcc,
     telemetry,
-    text_filter,
     studio,
     users_api,
 )

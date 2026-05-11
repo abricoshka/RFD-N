@@ -150,3 +150,57 @@ class database(_logic.sqlite_connector_base):
             items=items_list,
             next_start=next_start,
         )
+
+    def remove(self, scope: str, target: str, key: str, typ: str):
+        current_value = self.get(scope, target, key, typ)
+        if current_value is None:
+            return None
+
+        self.sqlite.execute(
+            query=f"""
+            DELETE FROM {self.TABLE_NAME}
+            WHERE {self.field.SCOPE.value} = ?
+            AND {self.field.TARGET.value} = ?
+            AND {self.field.TYPE.value} = ?
+            AND {self.field.KEY.value} = ?
+            """,
+            values=(scope, target, typ, key),
+        )
+        return current_value
+
+    def list_entries(
+        self,
+        scope: str,
+        key: str,
+        typ: str,
+        limit: int = 50,
+        cursor: int = 0,
+    ) -> tuple[list[dict[str, Any]], int | None]:
+        safe_limit = max(1, min(limit, 100))
+        safe_cursor = max(0, cursor)
+
+        rows: list[list[Any]] | None = self.sqlite.execute_and_fetch(
+            query=f"""
+            SELECT {self.field.TARGET.value}, {self.field.VALUE.value}
+            FROM {self.TABLE_NAME}
+            WHERE {self.field.SCOPE.value} = ?
+            AND {self.field.KEY.value} = ?
+            AND {self.field.TYPE.value} = ?
+            ORDER BY {self.field.TARGET.value} ASC
+            LIMIT ? OFFSET ?
+            """,
+            values=(scope, key, typ, safe_limit + 1, safe_cursor),
+        )
+        assert rows is not None
+
+        has_more = len(rows) > safe_limit
+        trimmed = rows[:safe_limit]
+        entries = [
+            {
+                "target": str(row[0]),
+                "value": json.loads(str(row[1])),
+            }
+            for row in trimmed
+        ]
+        next_cursor = safe_cursor + safe_limit if has_more else None
+        return entries, next_cursor

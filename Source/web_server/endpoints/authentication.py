@@ -150,6 +150,11 @@ def _(self: web_server_handler) -> bool:
     return util.auth.HandlePasswordsCurrentStatus(self)
 
 
+@server_path('/studio-login/v1/login') # <2023 Studio Login API
+def _(self: web_server_handler) -> bool:
+    return util.auth.HandleStudioLogin(self)
+
+
 # Idk why i added auth-token-service APIs. It just looks cool.
 @server_path('/auth-token-service/v1/login/create')
 def _(self: web_server_handler) -> bool:

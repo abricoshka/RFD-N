@@ -484,8 +484,6 @@ def _(self: web_server_handler) -> bool:
     try:
         request_items = _parse_catalog_items_request(self)
     except (ValueError, json.JSONDecodeError):
-        self.send_response(400)
-        self.send_header("Content-type", "application/json")
         self.send_json({
             "errors": [
                 {
@@ -493,7 +491,7 @@ def _(self: web_server_handler) -> bool:
                     "message": "Invalid catalog items request.",
                 }
             ]
-        })
+        }, 400)
         return False
 
     storage = self.server.storage

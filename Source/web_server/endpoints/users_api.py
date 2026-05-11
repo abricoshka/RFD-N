@@ -1,9 +1,30 @@
 import json
 import re
+import urllib
 
 import util.auth
 from web_server._logic import web_server_handler, server_path
 
+def _read_json_body(self: web_server_handler) ->  dict[str, str] | None:
+    try:
+        raw = self.read_content()
+        if not raw:
+            return {}
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        self.send_json(
+            {"errors": [{"code": 0, "message": "Malformed JSON body"}]},
+            400,
+        )
+        return None
+
+    if not isinstance(payload, dict):
+        self.send_json(
+            {"errors": [{"code": 0, "message": "Malformed JSON body"}]},
+            400,
+        )
+        return None
+    return payload
 
 def send_user_details_v1(
     self: web_server_handler,
@@ -115,4 +136,63 @@ def _(self: web_server_handler) -> bool:
 @util.auth.authenticated_required_api
 def authenticated_roles(self: web_server_handler) -> bool:
     self.send_json({"roles": []})
+    return True
+
+
+@server_path('/user-profile-api/v1/user/profiles/get-profiles', commands={'POST'})
+def _(self: web_server_handler) -> bool:
+    payload = _read_json_body(self)
+
+    user_ids_raw: str = str(payload.get('userIds'))
+    if user_ids_raw is None:
+        self.send_json({"errors": [{"code": 4, "message": "The requested Ids are invalid, of an invalid type or missing."}]}, 400)
+        return True
+
+    user_ids = user_ids_raw.split(",")
+    if len(user_ids) > 100:
+        self.send_json({"errors": [{"code": 1, "message": "There are too many requested Ids."}]}, 400)
+        return True
+
+    processed_requests = []
+    for user_id in user_ids:
+        try:
+            user_id_num = int(user_id)
+            print(user_id_num)
+        except ValueError:
+            continue
+        user = self.server.storage.user.check_object(user_id_num)
+        if user is None:
+            processed_requests.append({
+                "userId": user_id_num,
+                "names": {
+                    "alias": None,
+                    "username": None,
+                    "displayName": None,
+                    "contactName": None,
+                    "combinedName": None,
+                    "platformName": None
+                },
+                "platformProfileId": None,
+                "isVerified": False
+            })
+            continue
+
+        processed_requests.append({
+            "userId": user.id,
+            "names": {
+                "alias": None,
+                "username": user.username,
+                "displayName": user.username,
+                "contactName": None,
+                "combinedName": user.username,
+                "platformName": None
+            },
+            "platformProfileId": None,
+            "isVerified": user.is_verified
+        })
+
+    self.send_json({
+        "profileDetails": processed_requests,
+        "errors": []
+    })
     return True

@@ -926,6 +926,8 @@ def _(self: web_server_handler) -> bool:
         "ClientPublicKeyData": "Test",
         "RccVersion": "0.671.0.6710816",
         "ChannelName": "",
+        "IsUserVoiceChatEnabled": True,
+        "IsUserAvatarVideoEnabled": True,
         "VerifiedAMP": 0,
         "PrivateServerOwnerID": 0,
         "PrivateServerID": "",

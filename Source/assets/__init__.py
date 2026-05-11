@@ -223,11 +223,6 @@ class asseter:
             return returns.construct(data=remote_data)
 
         remote_data = self._load_asset_num(asset_id)
-        if isinstance(remote_data, extractor.download_failure):
-            return returns.construct(
-                error=remote_data.message,
-                status=remote_data.status,
-            )
         return returns.construct(data=remote_data)
 
     def get_asset(

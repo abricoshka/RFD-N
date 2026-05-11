@@ -1,12 +1,9 @@
 # Standard library imports
 import re
-import json
 import copy
-import os
-import pyzstd
+import urllib
 
 # Local application imports
-import assets.returns as returns
 import util.const
 import util.resource
 from web_server._logic import web_server_handler, server_path, web_server_ssl
@@ -21,9 +18,6 @@ CLIENT_SETTINGS_OVERRIDES = {
     "DFFlagAppendSourceIdToRequireLog": "True",
     "FFlagEnableCoreScriptBacktraceReporting": "True",
     "DFIntReportLocalPlayerMissingStackTraceUserIdPercentage": "100",
-    "FLogScriptContext": "6",
-    "FLogCoreScripts": "6",
-    "FLogScriptPrint": "6",
 }
 
 
@@ -163,12 +157,12 @@ def _(self: web_server_handler) -> bool:
 
     return True
 
-@server_path('/v2/settings/application/PCStudioApp', versions={versions.rōblox.v574})
+@server_path('/v2/settings/application/PCStudioApp', versions={versions.rōblox.v562})
 def _(self: web_server_handler) -> bool:
     self.send_json(
         with_client_settings_overrides(
             web_server.settings_files.read_settings_json(
-                'windows_2023_fflags.json',
+                'PCStudioApp23.json',
             ),
         ),
     )
@@ -176,13 +170,56 @@ def _(self: web_server_handler) -> bool:
 
 @server_path(
     '/v2/settings/application/PCStudioApp',
-    versions=set(versions.VERSION_MAP.values()) - {versions.VERSION_MAP['v574']},
+    versions={versions.rōblox.v712}, # set(versions.VERSION_MAP.values()) - {versions.VERSION_MAP['v574']}
 )
 def _(self: web_server_handler) -> bool:
     self.send_json(
         with_client_settings_overrides(
             web_server.settings_files.read_settings_json(
-                'windows_2026_fflags.json',
+                'PCStudioApp26.json',
+            ),
+        ),
+    )
+    return True
+
+@server_path(
+    '/v2/settings/application/PCStudioApp',
+    versions={versions.rōblox.v671},
+)
+def _(self: web_server_handler) -> bool:
+    self.send_json(
+        with_client_settings_overrides(
+            web_server.settings_files.read_settings_json(
+                'PCStudioApp25.json',
+            ),
+        ),
+    )
+    return True
+
+@server_path(
+    '/v2/settings/application/PCStudioApp',
+    versions={versions.rōblox.v619},
+)
+def _(self: web_server_handler) -> bool:
+    self.send_json(
+        with_client_settings_overrides(
+            web_server.settings_files.read_settings_json(
+                'PCStudioApp24.json',
+            ),
+        ),
+    )
+    return True
+
+
+@server_path(
+    '/v2/settings/application/PCStudioApp',
+    versions={versions.rōblox.v535},
+)
+def _(self: web_server_handler) -> bool:
+    self.send_json(
+        with_client_settings_overrides(
+            web_server.settings_files.read_settings_json(
+                'PCStudioApp22.json',
             ),
         ),
     )
@@ -217,34 +254,48 @@ def _(self: web_server_handler) -> bool:
     commands={'GET'},
 )
 def _(self: web_server_handler, match: re.Match[str]) -> bool:
-    _file_path, payload = web_server.settings_files.read_matching_settings_bytes(
-        '*.dcz',
-    )
-    dictionary_hash = match.group(1)
-    dictionary_path = get_player_settings_dictionary_path(
-        self,
-        dictionary_hash,
-    )
-    if os.path.isfile(dictionary_path):
-        with open(dictionary_path, 'rb') as dictionary_file:
-            dictionary_data = dictionary_file.read()
-        zstd_dict = pyzstd.ZstdDict(
-            dictionary_data,
-            is_raw=True,
-        )
-        decoded = pyzstd.decompress(payload, zstd_dict)
-        settings = with_client_settings_overrides(
-            json.loads(decoded.decode('utf-8')),
-        )
-        payload = pyzstd.compress(
-            json.dumps(settings, separators=(',', ':')).encode('utf-8'),
-            zstd_dict=zstd_dict,
-        )
+    upstream_url = f"https://clientsettingscdn.roblox.com/v2/settings-compressed/application/PCDesktopClient/{match.group(1)}.dcz"
 
-    self.send_data(
-        payload,
-        content_type='application/octet-stream',
+    request = urllib.request.Request(
+        upstream_url,
+        headers={
+            "Accept": "application/octet-stream",
+            "User-Agent": self.headers.get("User-Agent", "RFD/1.0"),
+        },
+        method="GET",
     )
+
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = response.read()
+            content_type = (
+                    response.headers.get("Content-Type") or
+                    "application/octet-stream"
+            )
+            self.send_data(
+                payload,
+                status=response.status,
+                content_type=content_type,
+            )
+            return True
+    except urllib.error.HTTPError as error:
+        error_body = error.read()
+        content_type = (
+                           error.headers.get("Content-Type")
+                           if error.headers is not None
+                           else None
+                       ) or "application/octet-stream"
+        self.send_data(
+            error_body,
+            status=error.code,
+            content_type=content_type,
+        )
+        return True
+    except urllib.error.URLError:
+        self.send_json(
+            {"errors": [{"message": "Failed to reach clientsettingscdn.roblox.com"}]},
+            502,
+        )
     return True
 
 

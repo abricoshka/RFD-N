@@ -41,6 +41,8 @@ RBOLOCK_REQUIRED_HOSTS = [
     '127.0.0.1 thumbnails.rbolock.tk',
     '127.0.0.1 usermoderation.rbolock.tk',
     '127.0.0.1 users.rbolock.tk',
+    '127.0.0.1 voice.rbolock.tk',
+    '127.0.0.1 gamepersistence.rbolock.tk'
 ]
 
 RBOLOCK_SERVER_HOSTS = (
@@ -74,6 +76,8 @@ RBOLOCK_SERVER_HOSTS = (
     'thumbnails.rbolock.tk',
     'usermoderation.rbolock.tk',
     'users.rbolock.tk',
+    'voice.rbolock.tk'
+    'gamepersistence.rbolock.tk',
     '*.rbolock.tk',
     '*.api.rbolock.tk',
 )

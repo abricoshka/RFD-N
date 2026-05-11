@@ -223,7 +223,7 @@ class obj_type(logic.bin_entry):
         cmd_args = ""
         version = self.retr_version()
         match version:
-            case util.versions.rōblox.v712:
+            case util.versions.rōblox.v712 | util.versions.rōblox.v671 | util.versions.rōblox.v619:
                 cmd_args = (
                     "-play", ""
                     "-a", f"roblox://experiences/start?placeId={util.const.PLACE_IDEN_CONST}"

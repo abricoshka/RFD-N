@@ -95,6 +95,7 @@ def _(self: web_server_handler) -> bool:
 
 
 @server_path('/universal-app-configuration/v1/behaviors/app-patch/content')
+@server_path('/universal-app-configuration/v1/behaviors/app-patch-discovery/content')
 def _(self: web_server_handler) -> bool:
     self.send_json({
         "SchemaVersion": "1",
@@ -215,4 +216,10 @@ def _(self: web_server_handler) -> bool:
         "RequireExplicitAvatarVideoConsent": True,
         "EnableVoiceReportAbuseMenu": True
     })
+    return True
+
+@server_path('/user-blocking-api/v1/users/rcc/batch-check-reciprocal-block')
+def _(self: web_server_handler) -> bool:
+    print(self.read_content())
+    self.send_json({})
     return True

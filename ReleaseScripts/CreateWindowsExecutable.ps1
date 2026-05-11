@@ -1,7 +1,7 @@
 $root = "$PSScriptRoot/.."
 
 pyinstaller `
-	--name "RFD" `
+	--name "RFD-N" `
 	--onefile "$root/Source/_main.py" `
 	--paths "$root/Source/" `
 	--workpath "$root/PyInstallerWork" `

@@ -135,9 +135,6 @@ def _(self: web_server_handler) -> bool:
     # Also check the query string — the batch endpoint encodes the accept
     # format as ?accept=rbx-format/color_dxt etc. in the location URL.
     accept = self.headers.get('Accept')
-    # if accept == 'ktx/dxt':
-    #    self.send_error(404)
-    #    return True
     accept_query = self.query.get('accept')
     if accept_query and (accept is None or accept == '*/*'):
         accept = accept_query
@@ -148,7 +145,7 @@ def _(self: web_server_handler) -> bool:
         accept = None
 
     # TexturePack DXT resolver: load XML from cache, resolve to texture ID, serve KTX.
-    # print(f'[dxt check] id={asset_id} accept={accept} is_studio={is_studio}', flush=True)
+    print(f'[dxt check] id={asset_id} accept={accept} is_studio={is_studio}', flush=True)
 
     # For DXT TexturePack requests, we need to check the local cache first
     # regardless of the accept header — DXT path in get_asset bypasses the
@@ -214,7 +211,7 @@ def _(self: web_server_handler) -> bool:
         elif data[:2] == b'\xff\xd8':
             content_type = 'image/jpeg'
         elif data[:4] in (b'<rbl', b'<rob'):
-            content_type = 'application/xml'
+            content_type = 'binary/octet-stream'
         else:
             content_type = 'application/octet-stream'
         self.send_data(data, content_type=content_type)

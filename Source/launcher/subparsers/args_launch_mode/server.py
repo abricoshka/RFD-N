@@ -262,7 +262,7 @@ def _(
 
         if not args_ns.skip_rcc:
             match game_config.game_setup.roblox_version:
-                case util.versions.rōblox.v463, util.versions.rōblox.v347:
+                case util.versions.rōblox.v463 | util.versions.rōblox.v347:
                     rcc_routine_args.append(
                         rcc.obj_type(
                             # TODO: add support for RCC to connect to hosts other than `localhost`.

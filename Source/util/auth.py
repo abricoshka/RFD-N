@@ -826,6 +826,49 @@ def HandleLogin(self: web_server_handler) -> bool:
     return True
 
 
+def HandleStudioLogin(self: web_server_handler) -> bool:
+    token = _get_request_token(self)
+    if token is None:
+        _send_api_auth_error(self)
+        return True
+
+    user = GetCurrentUser(self)
+    storage = self.server.storage
+    if user is None:
+        self.send_response(401)
+        ClearAuthCookie(self)
+        self.send_json(
+            {"errors": [{"code": 0, "message": "User not found."}]},
+            status=None,
+        )
+        return True
+
+    if user.accountstatus <= 0:
+        self.send_json(
+            {"errors": [{"code": 0, "message": "User is not active"}], "isBanned": True},
+            403,
+        )
+        return True
+
+    storage.user.update_lastonline(user.id)
+    self.send_json({
+            'user': {
+                'UserId': user.id,
+                'Username': user.username,
+                'AgeBracket': 0,
+                "Roles": ["Soothsayer","BetaTester"],
+                'Email': {
+                    'value': 'placeholder@example.com',
+                    'isVerified': True,
+                },
+                'IsBanned': False,
+                'DisplayName': user.username,
+            },
+            'userAgreements': []
+    })
+    return True
+
+
 def HandleSignup(self: web_server_handler) -> bool:
     try:
         payload = _read_json_object(self)

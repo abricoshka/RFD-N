@@ -281,7 +281,6 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
             cmd_args=self.gen_cmd_args(),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            # env={**os.environ, 'LOCAL_RCC_BYTECODE_ENCODER': 'legacy', 'LOCAL_RCC_BYTECODE_CONTAINER': "prehash-zero-trailer", 'LOCAL_RCC_DUMP_BYTECODE': 'true', 'LOCAL_RCC_TRACE_ALL_COMPILES': 'true', 'LOCAL_RCC_PROTECTED_STRING_FORMAT': '0x4'}
         )
 
         # Inject local_rcc.dll into the now-running Server.exe process,
