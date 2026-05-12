@@ -7,17 +7,14 @@ import gzip
 import os
 import re
 
+_HTTP_POOL = urllib3.PoolManager()
 
-def get_cookie_from_system() -> str | None:
+
+def _get_cookie_from_system() -> str | None:
     '''
-    Attempts to retrieve and decrypt the Roblox security cookie from the local system on Windows.
-
     Only works on Windows systems.
     Do not count on a valid cookie being returned when you run this on a remote server.
     https://github.com/Ramona-Flower/Roblox-Client-Cookie-Stealer/blob/main/main.py
-
-    Returns:
-        The `.ROBLOSECURITY` cookie string if found and successfully decrypted; otherwise, `None`.
     '''
     roblox_cookies_path = os.path.join(
         os.getenv("USERPROFILE", ""),
@@ -69,7 +66,7 @@ def get_rōblox_cookie() -> str | None:
         (
             v for v in
             (
-                get_cookie_from_system(),
+                _get_cookie_from_system(),
                 os.environ.get('ROBLOSECURITY', None),
             )
             if test_cookie(v)
@@ -122,7 +119,7 @@ def download_item(url: str, cookie: str | None = None, accept: str | None = None
 
     try:
         http = urllib3.PoolManager()
-        response = http.request('GET', url, headers=headers)
+        response = _HTTP_POOL.request('GET', url, headers=headers)
         # if accept is not None and accept in _DXT_ACCEPT_HEADERS:
         # print(f'[dxt] {url} status={response.status} content-type={response.headers.get("Content-Type")} content-encoding={response.headers.get("Content-Encoding")} len={len(response.data)}', flush=True)
         # print(f'[dxt headers] {dict(response.headers)}', flush=True)
